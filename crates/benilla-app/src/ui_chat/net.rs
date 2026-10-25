@@ -11,10 +11,21 @@ use crate::net::{ClientCommand, NetCommands, NetHandlerApp, PlayedTimeAnswer, Se
 use crate::ui_action::{UiErrorKeys, UiErrorTexts};
 use crate::ui_social::SocialState;
 
+#[derive(Resource, Default)]
+pub struct ChatTap {
+    pub prefixes: Vec<String>,
+}
+
+#[derive(Message, Clone, Debug)]
+pub struct TappedLine(pub String);
+
+const CHAT_MSG_SYSTEM: u8 = 0x0A;
+
 /// Register the chat window's handlers and its session-end listener, the channel list's among
 /// them.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
+    app.init_resource::<ChatTap>().add_message::<TappedLine>();
     super::roster::register(app);
     app.net_handler(K::Chat, on_chat)
         .net_handler(K::ChatPlayerNotFound, on_whisper_refusal)
@@ -34,12 +45,18 @@ pub(super) fn register(app: &mut App) {
 
 fn on_chat(
     In(ev): In<SessionEvent>,
+    tap: Res<ChatTap>,
+    mut tapped: MessageWriter<TappedLine>,
     chat_log: Res<ChatLog>,
     social: Res<SocialState>,
     commands: Res<NetCommands>,
     mut server_said: MessageWriter<ServerSaidMessage>,
 ) {
     if let SessionEvent::Chat(m) = ev {
+        if m.chat_type == CHAT_MSG_SYSTEM && tap.prefixes.iter().any(|p| m.text.starts_with(p.as_str())) {
+            tapped.write(TappedLine(m.text));
+            return;
+        }
         chat(m, &chat_log, &social, &commands, &mut server_said);
     }
 }

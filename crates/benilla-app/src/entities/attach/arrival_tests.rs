@@ -271,7 +271,7 @@ fn a_body_that_waited_for_its_atlas_fades_from_its_arrival() {
         app.world()
             .get::<benilla_world::model_fade::UnitAppearFade>(player)
             .copied(),
-        Some(benilla_world::model_fade::UnitAppearFade::Pending {
+        super::FRESH_VISUALS_FADE_IN.then_some(benilla_world::model_fade::UnitAppearFade::Pending {
             since: built_at,
             arrived,
         }),

@@ -876,6 +876,7 @@ mod blood;
 mod env_damage;
 pub(crate) mod net;
 pub(crate) mod spell_visual;
+pub(crate) mod fx_anchor;
 use blood::{blood_spurts, load_blood_tables};
 use env_damage::{hard_landing_dust, load_env_damage_table};
 pub(crate) use env_damage::{EnvDamageTable, HardLanding, HARD_LANDING_DESCENT};
@@ -1121,6 +1122,7 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<MissileSpawn>()
             .add_message::<ChainProcPlay>()
             .add_message::<KitPush>()
+            .add_message::<fx_anchor::AnchorFx>()
             // The aura CharProc edges, drained by `crate::aura_visual`.
             .add_message::<crate::aura_visual::AuraProc>()
             .add_message::<HardLanding>()
@@ -1135,6 +1137,10 @@ impl Plugin for CreatureAnimPlugin {
                     load_env_damage_table,
                 )
                     .after(AssetSet::Open),
+            )
+            .add_systems(
+                Update,
+                fx_anchor::play_anchor_fx.before(route_cast_visuals),
             )
             .add_systems(
                 Update,

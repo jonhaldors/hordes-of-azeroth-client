@@ -482,7 +482,7 @@ fn stamp_arrivals(
 }
 
 /// Marks a net entity whose visual is attached; the `waterfx` rig pre-marks its dummy unit.
-#[derive(Component)]
+#[derive(Component, Default)]
 pub(crate) struct VisualAttached;
 
 /// The per-frame entity-visuals chain as one set; [`crate::creature_anim::VisualSheath`] must land

@@ -38,6 +38,7 @@ pub(crate) mod logging;
 #[cfg(test)]
 mod monster_tests;
 mod net;
+pub use net::{ChatTap, TappedLine};
 #[cfg(test)]
 mod notice_tests;
 /// The `AUTO_JOIN_GUILD_CHANNEL` cascade, the one place the client joins or leaves

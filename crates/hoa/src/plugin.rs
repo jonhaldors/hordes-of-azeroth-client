@@ -9,6 +9,8 @@ use crate::nameplates::{add_plate_events, track_nameplates, SharedPlates};
 use crate::pad::{poll_pads, SharedController};
 use crate::snapshot::{capture_snapshot, SharedSnapshot};
 use crate::world_map::SharedMapAreas;
+use crate::telegraphs::{expire_telegraphs, project_telegraphs, push_telegraphs, Telegraphs};
+use crate::world_fx::{apply_draw_lines, expire_kit_anchors, move_flights, tap_draw_lines, DisplayModels};
 
 pub struct HordesOfAzerothPlugin;
 
@@ -30,14 +32,33 @@ impl Plugin for HordesOfAzerothPlugin {
             .insert_non_send_resource(hosts.plates.clone())
             .insert_non_send_resource(hosts.typing.clone())
             .insert_non_send_resource(hosts.controller.clone())
-            .add_systems(Startup, (name_window, announce_addon_folder))
+            .init_resource::<Telegraphs>()
+            .insert_resource(DisplayModels::from_install())
+            .add_systems(Startup, (name_window, announce_addon_folder, tap_draw_lines))
             .add_systems(
                 PreUpdate,
                 (notice_keyboard_and_mouse, poll_pads, drive_pad_cursor)
                     .chain()
                     .after(bevy::input::InputSystems),
             )
-            .add_systems(Update, hide_cursor_for_pad)
+            .add_systems(
+                Update,
+                (
+                    hide_cursor_for_pad,
+                    (
+                        apply_draw_lines,
+                        move_flights,
+                        expire_kit_anchors,
+                        expire_telegraphs,
+                        project_telegraphs,
+                    )
+                        .chain(),
+                ),
+            )
+            .add_systems(
+                PostUpdate,
+                push_telegraphs.after(benilla_world::particles::buffer::begin_effect_frame),
+            )
             .add_systems(
                 Last,
                 (

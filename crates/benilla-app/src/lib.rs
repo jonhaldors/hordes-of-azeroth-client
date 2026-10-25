@@ -207,6 +207,8 @@ pub use benilla_world::worldview::run as run_worldview;
 pub use bevy::app::AppExit;
 // A crate on top of benilla reads objects and interacts through these, with no protocol dependency.
 pub use benilla_protocol::{messages::ObjectType, ObjectFields};
+pub use creature_anim::fx_anchor::{AnchorFx, FxAnchor};
+pub use ui_chat::{ChatTap, TappedLine};
 pub use net::Objects;
 pub use player::pad_steer::PadSteer;
 pub use target::Interact;

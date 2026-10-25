@@ -6,8 +6,11 @@ mod keys;
 mod lua_api;
 mod nameplates;
 mod pad;
+mod server_draw;
 mod snapshot;
+mod telegraphs;
 mod unit_lua;
+mod world_fx;
 mod world_map;
 
 pub mod plugin;
