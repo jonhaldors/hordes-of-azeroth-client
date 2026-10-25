@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::interact::{update_interact, SharedInteract};
-use crate::lua_api::{install_lua_api, InstalledSession};
+use crate::lua_api::{scripted_login_from_env, LuaHosts};
 use crate::snapshot::{capture_snapshot, SharedSnapshot};
 use crate::world_map::SharedMapAreas;
 
@@ -9,15 +9,17 @@ pub struct HordesOfAzerothPlugin;
 
 impl Plugin for HordesOfAzerothPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_non_send_resource(SharedSnapshot::default())
-            .insert_non_send_resource(SharedMapAreas::from_install())
-            .insert_non_send_resource(SharedInteract::default())
-            .init_resource::<InstalledSession>()
+        let hosts = LuaHosts {
+            snapshot: SharedSnapshot::default(),
+            areas: SharedMapAreas::from_install(),
+            interact: SharedInteract::default(),
+            scripted_login: scripted_login_from_env(),
+        };
+        app.insert_non_send_resource(hosts.snapshot.clone())
+            .insert_non_send_resource(hosts.interact.clone())
             .add_systems(Startup, (name_window, announce_addon_folder))
-            .add_systems(
-                Last,
-                (capture_snapshot, update_interact, install_lua_api).chain(),
-            );
+            .add_systems(Last, (capture_snapshot, update_interact).chain());
+        benilla_app::seed_every_vm(app, move |script| hosts.seed(script));
     }
 }
 

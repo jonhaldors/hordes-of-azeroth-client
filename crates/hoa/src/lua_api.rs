@@ -1,5 +1,5 @@
 use benilla_mlua::{Lua, MultiValue, Result as LuaResult, Table};
-use benilla_ui::script::UiScript;
+use benilla_ui::script::{UiScript, VmKind};
 use bevy::prelude::*;
 
 use crate::interact::SharedInteract;
@@ -7,30 +7,41 @@ use crate::interact_lua::register_interact;
 use crate::snapshot::SharedSnapshot;
 use crate::world_map::SharedMapAreas;
 
-#[derive(Resource, Default)]
-pub struct InstalledSession(Option<u64>);
+#[derive(Clone)]
+pub struct LuaHosts {
+    pub snapshot: SharedSnapshot,
+    pub areas: SharedMapAreas,
+    pub interact: SharedInteract,
+    pub scripted_login: Option<(String, String)>,
+}
 
-pub fn install_lua_api(world: &mut World) {
-    let (Some(snapshot), Some(areas), Some(interact)) = (
-        world.get_non_send_resource::<SharedSnapshot>().cloned(),
-        world.get_non_send_resource::<SharedMapAreas>().cloned(),
-        world.get_non_send_resource::<SharedInteract>().cloned(),
-    ) else {
-        return;
-    };
-    let Some(script) = world.get_non_send_resource::<UiScript>() else {
-        return;
-    };
-    let session = script.session();
-    if world.resource::<InstalledSession>().0 == Some(session) {
-        return;
+impl LuaHosts {
+    pub fn seed(&self, script: &UiScript) {
+        let seeded = match script.vm_kind() {
+            VmKind::Glue => self.seed_glue(script.lua()),
+            VmKind::InGame => register_classic_api(script.lua(), &self.snapshot, &self.areas)
+                .and_then(|()| register_interact(script.lua(), &self.interact)),
+        };
+        if let Err(error) = seeded {
+            warn!("Hordes of Azeroth: Lua functions not installed: {error}");
+        }
     }
-    let installed = register_classic_api(script.lua(), &snapshot, &areas)
-        .and_then(|()| register_interact(script.lua(), &interact));
-    if let Err(error) = installed {
-        warn!("Hordes of Azeroth: Lua functions not installed: {error}");
+
+    fn seed_glue(&self, lua: &Lua) -> LuaResult<()> {
+        let Some((account, password)) = &self.scripted_login else {
+            return Ok(());
+        };
+        let globals = lua.globals();
+        globals.set("HOA_LOGIN_ACCOUNT", account.as_str())?;
+        globals.set("HOA_LOGIN_PASSWORD", password.as_str())?;
+        Ok(())
     }
-    world.resource_mut::<InstalledSession>().0 = Some(session);
+}
+
+pub fn scripted_login_from_env() -> Option<(String, String)> {
+    let account = std::env::var("WOW_USER").ok().filter(|v| !v.is_empty())?;
+    let password = std::env::var("WOW_PASS").ok().filter(|v| !v.is_empty())?;
+    Some((account, password))
 }
 
 fn register_classic_api(
