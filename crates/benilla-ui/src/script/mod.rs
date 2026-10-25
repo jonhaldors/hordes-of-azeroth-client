@@ -84,7 +84,7 @@ mod glue_core;
 mod glue_create;
 mod glue_realm;
 mod glue_select;
-pub use glue::{glue_events, VmKind};
+pub use glue::{add_in_game_event, glue_events, VmKind};
 pub use glue_core::scanf_d;
 pub use glue_core::{
     glue_status_key, launch_addon_url, launch_addon_url_allowed, launch_url_allowed, GlueCall,

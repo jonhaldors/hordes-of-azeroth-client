@@ -90,7 +90,33 @@ impl VmKind {
             .iter()
             .copied()
             .find(|e| e.eq_ignore_ascii_case(name))
+            .or_else(|| {
+                (self == VmKind::InGame)
+                    .then(|| added_in_game_event(name))
+                    .flatten()
+            })
     }
+}
+
+static ADDED_IN_GAME_EVENTS: std::sync::RwLock<Vec<&'static str>> =
+    std::sync::RwLock::new(Vec::new());
+
+pub fn add_in_game_event(name: &'static str) {
+    let mut added = ADDED_IN_GAME_EVENTS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !added.contains(&name) {
+        added.push(name);
+    }
+}
+
+fn added_in_game_event(name: &str) -> Option<&'static str> {
+    ADDED_IN_GAME_EVENTS
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .copied()
+        .find(|e| e.eq_ignore_ascii_case(name))
 }
 
 /// The glue core's screen verbs (registrar `0x46ddf0`, table `0x8373b8`): the screen root's size

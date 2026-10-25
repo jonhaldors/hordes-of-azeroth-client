@@ -157,6 +157,32 @@ impl NamePlates {
     pub(crate) fn vetoes(&self, frame: FrameHandle) -> bool {
         self.hit_test_vetoed && self.by_frame.contains_key(&frame)
     }
+
+    fn live_frames(&self) -> Vec<(u64, FrameHandle)> {
+        self.assigned
+            .iter()
+            .filter_map(|(&guid, &slot)| Some((guid, self.plates.get(slot)?.frame)))
+            .collect()
+    }
+}
+
+impl UiScript {
+    pub fn nameplate_frames(&self) -> Vec<(u64, mlua::Table)> {
+        let lua = self.lua();
+        let ids: Vec<(u64, u32)> = {
+            let Some(mut model) = lua.app_data_mut::<Model>() else {
+                return Vec::new();
+            };
+            let frames = model.nameplates.live_frames();
+            frames
+                .into_iter()
+                .map(|(guid, frame)| (guid, model.frame_id(frame)))
+                .collect()
+        };
+        ids.into_iter()
+            .filter_map(|(guid, id)| Some((guid, super::object::frame_wrapper(lua, id).ok()?)))
+            .collect()
+    }
 }
 
 /// A completed click on a plate. The reference's click slot (`0x7cb910`) selects the unit on the
