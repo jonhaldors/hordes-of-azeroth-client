@@ -60,6 +60,11 @@ fn play_coin_on_coinage_change(
     }
 }
 
+const PLAYS_COIN_ON_MONEY_CHANGE: bool = false;
+
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(Update, play_coin_on_coinage_change);
+    app.add_systems(
+        Update,
+        play_coin_on_coinage_change.run_if(|| PLAYS_COIN_ON_MONEY_CHANGE),
+    );
 }
