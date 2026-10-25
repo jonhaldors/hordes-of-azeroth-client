@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::interact::{update_interact, SharedInteract};
+use crate::keys::{capture_typing, SharedTyping};
 use crate::lua_api::{scripted_login_from_env, LuaHosts};
 use crate::nameplates::{add_plate_events, track_nameplates, SharedPlates};
 use crate::snapshot::{capture_snapshot, SharedSnapshot};
@@ -16,15 +17,23 @@ impl Plugin for HordesOfAzerothPlugin {
             areas: SharedMapAreas::from_install(),
             interact: SharedInteract::default(),
             plates: SharedPlates::default(),
+            typing: SharedTyping::default(),
             scripted_login: scripted_login_from_env(),
         };
         app.insert_non_send_resource(hosts.snapshot.clone())
             .insert_non_send_resource(hosts.interact.clone())
             .insert_non_send_resource(hosts.plates.clone())
+            .insert_non_send_resource(hosts.typing.clone())
             .add_systems(Startup, (name_window, announce_addon_folder))
             .add_systems(
                 Last,
-                (capture_snapshot, update_interact, track_nameplates).chain(),
+                (
+                    capture_snapshot,
+                    update_interact,
+                    track_nameplates,
+                    capture_typing,
+                )
+                    .chain(),
             );
         benilla_app::seed_every_vm(app, move |script| hosts.seed(script));
     }

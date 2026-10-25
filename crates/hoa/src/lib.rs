@@ -1,5 +1,6 @@
 mod interact;
 mod interact_lua;
+mod keys;
 mod lua_api;
 mod nameplates;
 mod snapshot;
