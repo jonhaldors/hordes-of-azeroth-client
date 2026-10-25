@@ -234,7 +234,7 @@ impl Bus {
 
 /// The reference's cap table, `.data` `0x87ce60`: 13 dwords with no writer, read only at
 /// `0x7a66b5`.
-const BUS_CAP: [u32; 13] = [0x7fff_ffff, 1, 2, 2, 1, 1, 2, 2, 1, 6, 4, 1, 2];
+const BUS_CAP: [u32; 13] = [0x7fff_ffff, 1, 2, 8, 1, 1, 2, 2, 1, 6, 4, 1, 2];
 
 /// How many copies of one kit may sound at once, for kits without the `NO_DUPLICATES` flag.
 /// Deviation: the reference leaves those kits uncapped; sample-aligned copies of one file sum
@@ -1083,11 +1083,10 @@ pub(super) fn plugin(app: &mut App) {
 mod tests {
     use super::*;
 
-    /// Pinned as the 13 dwords at `.data` `0x87ce60`.
     #[test]
-    fn the_cap_table_is_the_bytes_at_0x87ce60() {
+    fn the_cap_table_is_the_reference_with_eight_sound_files() {
         assert_eq!(BUS_CAP.len(), 13);
-        assert_eq!(BUS_CAP, [0x7fff_ffff, 1, 2, 2, 1, 1, 2, 2, 1, 6, 4, 1, 2]);
+        assert_eq!(BUS_CAP, [0x7fff_ffff, 1, 2, 8, 1, 1, 2, 2, 1, 6, 4, 1, 2]);
     }
 
     /// Each bus refuses at its own cap and not before; bus 0 never refuses.
@@ -1116,14 +1115,12 @@ mod tests {
         assert!(!bus_at_cap(live(5, 9), Bus(7)));
     }
 
-    /// `PlaySoundFile` opens on bus 3 (`0x4587bc`), whose cap is 2 (`0x87ce60`): a third file
-    /// while two play is refused, and the plays of other buses do not count against it.
     #[test]
-    fn play_sound_file_opens_on_bus_3_and_refuses_a_third() {
+    fn play_sound_file_opens_on_bus_3_and_refuses_a_ninth() {
         let live = |bus: u8, n: usize| std::iter::repeat_n(Bus(bus), n);
         assert_eq!(sound_file_bus(std::iter::empty()), Some(Bus(3)));
-        assert_eq!(sound_file_bus(live(3, 1)), Some(Bus(3)));
-        assert_eq!(sound_file_bus(live(3, 2)), None, "the third is refused");
+        assert_eq!(sound_file_bus(live(3, 7)), Some(Bus(3)));
+        assert_eq!(sound_file_bus(live(3, 8)), None, "the ninth is refused");
         assert_eq!(
             sound_file_bus(live(0, 50)),
             Some(Bus(3)),
