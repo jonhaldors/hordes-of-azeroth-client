@@ -65,7 +65,7 @@ impl Default for NameConfig {
     fn default() -> Self {
         Self {
             player: true,
-            npc: false,
+            npc: true,
             own: false,
             player_guild: true,
             player_pvp_title: true,

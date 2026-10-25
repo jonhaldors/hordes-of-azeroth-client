@@ -383,7 +383,7 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // (`0x86c694`) "1" (`0x82e748`), `UnitNameNPC` (`0x86c6a4`) and `UnitNameOwn` (`0x86c6b0`) "0"
     // (`0x82e570`).
     same("UnitNamePlayer", "1"),
-    same("UnitNameNPC", "0"),
+    deviates("UnitNameNPC", "1", "0", "Hordes of Azeroth shows friendly NPC names out of the box"),
     same("UnitNameOwn", "0"),
     // `UnitNamePlayerGuild` (`0x86c680`, "1", mask bit `0x10`) is not a show gate: `ShouldShowName`
     // (`0x6070a0`) reads bits `0x1/0x2/0x4`, and this gates the `"\n<%s>"` guild line at

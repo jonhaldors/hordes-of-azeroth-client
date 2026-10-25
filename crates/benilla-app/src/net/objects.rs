@@ -966,6 +966,10 @@ fn monster_move(
         // The spline supersedes the relay stream: a splined player (charge, taxi) would otherwise
         // keep stale flags that outrank the spline in the anim selector.
         commands.entity(e).remove::<RemoteMotion>();
+        let path = match transport {
+            None => start_where_drawn(path, transforms.get(e).ok().map(|t| bevy_to_wow(t.translation))),
+            Some(_) => path,
+        };
         match monster_move_spline(
             path,
             spline_id,
@@ -987,6 +991,21 @@ fn monster_move(
             }
         }
     }
+}
+
+const NEW_PATH_STARTS_WHERE_DRAWN: bool = true;
+const DRAWN_START_MAX_GAP: f32 = 3.0;
+
+fn start_where_drawn(mut path: Vec<[f32; 3]>, drawn: Option<[f32; 3]>) -> Vec<[f32; 3]> {
+    let (Some(drawn), Some(first)) = (drawn, path.first_mut()) else {
+        return path;
+    };
+    let gap = (drawn[0] - first[0]).hypot(drawn[1] - first[1]);
+    if NEW_PATH_STARTS_WHERE_DRAWN && gap < DRAWN_START_MAX_GAP {
+        first[0] = drawn[0];
+        first[1] = drawn[1];
+    }
+    path
 }
 
 /// This unit's granted modes; no component means all bits clear.
