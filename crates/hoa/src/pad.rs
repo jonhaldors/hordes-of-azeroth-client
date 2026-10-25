@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use benilla_app::PadSteer;
 use bevy::input::gamepad::{Gamepad, GamepadAxis, GamepadButton};
 use bevy::prelude::*;
 
@@ -159,7 +160,19 @@ pub struct Controller {
     previous_buttons: u32,
     reported: PadKind,
     pub events: Vec<PadEvent>,
+    pub clicks: Vec<CursorClick>,
+    pub injected_click_until: f64,
+    left_held: bool,
+    right_held: bool,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CursorClick {
+    pub right: bool,
+    pub down: bool,
+}
+
+const CURSOR_SCREENS_PER_SECOND: f32 = 1.1;
 
 impl Controller {
     pub fn shown_kind(&self) -> PadKind {
@@ -185,21 +198,77 @@ impl Controller {
             self.reported = self.shown_kind();
             self.events.push(PadEvent::Device(self.reported.name()));
         }
+        if !self.capture || changed & pad.buttons & DPAD_BUTTONS != 0 {
+            self.leave_cursor_mode();
+        }
         for (index, name) in BUTTON_NAMES.iter().enumerate() {
             let bit = 1 << index;
-            if changed & bit != 0 {
-                self.events.push(PadEvent::Button {
-                    name,
-                    down: pad.buttons & bit != 0,
-                });
+            if changed & bit == 0 {
+                continue;
             }
+            let down = pad.buttons & bit != 0;
+            if self.cursor_click(bit, down) {
+                continue;
+            }
+            if bit == BUTTON_R3 && down && self.capture {
+                self.cursor_mode = !self.cursor_mode;
+                if !self.cursor_mode {
+                    self.leave_cursor_mode();
+                }
+            }
+            self.events.push(PadEvent::Button { name, down });
         }
         changed
     }
 
+    fn cursor_click(&mut self, bit: u32, down: bool) -> bool {
+        if !self.cursor_mode || (bit != BUTTON_A && bit != BUTTON_X) {
+            return false;
+        }
+        let right = bit == BUTTON_X;
+        let held = if right {
+            &mut self.right_held
+        } else {
+            &mut self.left_held
+        };
+        if down != *held {
+            *held = down;
+            self.clicks.push(CursorClick { right, down });
+        }
+        true
+    }
+
+    fn leave_cursor_mode(&mut self) {
+        for (right, held) in [(false, self.left_held), (true, self.right_held)] {
+            if held {
+                self.clicks.push(CursorClick { right, down: false });
+            }
+        }
+        self.left_held = false;
+        self.right_held = false;
+        self.cursor_mode = false;
+    }
+
+    pub fn cursor_travel(&mut self, dt: f32, screen_height: f32) -> Vec2 {
+        if !self.capture || (self.scroll_mode && !self.cursor_mode) {
+            return Vec2::ZERO;
+        }
+        let stick = radial_deadzone(self.pad.rx, self.pad.ry, self.options.look_deadzone);
+        if stick == Vec2::ZERO {
+            return Vec2::ZERO;
+        }
+        self.cursor_mode = true;
+        let speed = CURSOR_SCREENS_PER_SECOND
+            * self.options.cursor_speed
+            * screen_height
+            * dt
+            * stick.length();
+        Vec2::new(stick.x * speed, -stick.y * speed)
+    }
+
     pub fn use_keyboard_and_mouse(&mut self) {
         self.in_use = false;
-        self.cursor_mode = false;
+        self.leave_cursor_mode();
     }
 }
 
@@ -235,7 +304,49 @@ pub fn radial_deadzone(x: f32, y: f32, deadzone: f32) -> Vec2 {
     v / length * scaled
 }
 
-pub fn poll_pads(time: Res<Time<Real>>, pads: Query<&Gamepad>, shared: NonSend<SharedController>) {
+const YAW_RADIANS_PER_SECOND: f32 = std::f32::consts::PI;
+const PITCH_RADIANS_PER_SECOND: f32 = 1.6;
+
+pub fn steer_from(controller: &Controller, changed: u32) -> PadSteer {
+    if controller.connected == PadKind::None {
+        return PadSteer::default();
+    }
+    let pad = controller.pad.with_trigger_buttons();
+    let options = controller.options;
+    let pressed = |bit: u32| pad.buttons & bit != 0 && changed & bit != 0;
+    let moving = radial_deadzone(pad.lx, pad.ly, options.move_deadzone);
+    let mut look = radial_deadzone(pad.rx, pad.ry, options.look_deadzone);
+    let mut zoom = 0.0;
+    if pad.lt >= TRIGGER_PRESSED {
+        let dpad = f32::from(u8::from(pad.buttons & BUTTON_UP != 0))
+            - f32::from(u8::from(pad.buttons & BUTTON_DOWN != 0));
+        zoom = look.y + dpad;
+        look.y = 0.0;
+    }
+    if options.invert_pitch {
+        look.y = -look.y;
+    }
+    if controller.capture {
+        look = Vec2::ZERO;
+        zoom = 0.0;
+    }
+    PadSteer {
+        moving,
+        look,
+        zoom,
+        yaw_rate: YAW_RADIANS_PER_SECOND * options.yaw_speed,
+        pitch_rate: PITCH_RADIANS_PER_SECOND * options.pitch_speed,
+        jump: pressed(BUTTON_A) && !controller.capture,
+        recenter: pressed(BUTTON_R3) && !controller.capture,
+    }
+}
+
+pub fn poll_pads(
+    time: Res<Time<Real>>,
+    pads: Query<&Gamepad>,
+    shared: NonSend<SharedController>,
+    mut steer: ResMut<PadSteer>,
+) {
     let mut chosen: Option<(PadState, PadKind)> = None;
     for pad in &pads {
         let read = read_gamepad(pad);
@@ -247,10 +358,9 @@ pub fn poll_pads(time: Res<Time<Real>>, pads: Query<&Gamepad>, shared: NonSend<S
             break;
         }
     }
-    shared
-        .0
-        .borrow_mut()
-        .take_input(chosen, time.elapsed_secs_f64());
+    let mut controller = shared.0.borrow_mut();
+    let changed = controller.take_input(chosen, time.elapsed_secs_f64());
+    *steer = steer_from(&controller, changed);
 }
 
 #[cfg(test)]
@@ -321,5 +431,62 @@ mod tests {
         assert!((full.x - 1.0).abs() < 1e-6);
         let half = radial_deadzone(0.62, 0.0, 0.24);
         assert!((half.x - 0.5).abs() < 1e-3);
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+
+    #[test]
+    fn the_right_stick_drives_the_cursor_only_while_a_window_captures() {
+        let mut controller = Controller {
+            pad: PadState {
+                rx: 1.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(controller.cursor_travel(0.5, 1000.0), Vec2::ZERO);
+        controller.capture = true;
+        let travel = controller.cursor_travel(0.5, 1000.0);
+        assert!((travel.x - 550.0).abs() < 1e-3 && travel.y == 0.0);
+        assert!(controller.cursor_mode);
+    }
+
+    #[test]
+    fn a_and_x_click_in_cursor_mode_and_leaving_releases_them() {
+        let mut controller = Controller {
+            capture: true,
+            cursor_mode: true,
+            ..Default::default()
+        };
+        let pressed = PadState {
+            buttons: BUTTON_A,
+            ..Default::default()
+        };
+        controller.take_input(Some((pressed, PadKind::Xbox)), 0.0);
+        assert_eq!(
+            controller.clicks,
+            vec![CursorClick {
+                right: false,
+                down: true
+            }]
+        );
+        assert!(!controller
+            .events
+            .iter()
+            .any(|e| matches!(e, PadEvent::Button { name: "a", .. })));
+        controller.clicks.clear();
+        controller.capture = false;
+        controller.take_input(Some((pressed, PadKind::Xbox)), 0.1);
+        assert_eq!(
+            controller.clicks,
+            vec![CursorClick {
+                right: false,
+                down: false
+            }]
+        );
+        assert!(!controller.cursor_mode);
     }
 }

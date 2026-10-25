@@ -1,4 +1,5 @@
 mod controller_lua;
+mod cursor;
 mod interact;
 mod interact_lua;
 mod keys;

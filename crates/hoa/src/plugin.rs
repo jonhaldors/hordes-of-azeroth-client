@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::controller_lua::deliver_pad_events;
+use crate::cursor::{drive_pad_cursor, hide_cursor_for_pad, notice_keyboard_and_mouse};
 use crate::interact::{update_interact, SharedInteract};
 use crate::keys::{capture_typing, SharedTyping};
 use crate::lua_api::{scripted_login_from_env, LuaHosts};
@@ -30,7 +31,13 @@ impl Plugin for HordesOfAzerothPlugin {
             .insert_non_send_resource(hosts.typing.clone())
             .insert_non_send_resource(hosts.controller.clone())
             .add_systems(Startup, (name_window, announce_addon_folder))
-            .add_systems(PreUpdate, poll_pads)
+            .add_systems(
+                PreUpdate,
+                (notice_keyboard_and_mouse, poll_pads, drive_pad_cursor)
+                    .chain()
+                    .after(bevy::input::InputSystems),
+            )
+            .add_systems(Update, hide_cursor_for_pad)
             .add_systems(
                 Last,
                 (
