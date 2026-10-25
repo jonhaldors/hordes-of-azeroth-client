@@ -34,6 +34,8 @@ impl LastInput {
     }
 }
 
+pub(crate) const IDLE_SITS_AND_MARKS_AWAY: bool = false;
+
 /// 5 minutes: `0x482ecd lea ecx,[eax-0x493e0]`, `0x493e0` = 300 000 ms.
 const AUTO_AFK_AFTER: Duration = Duration::from_millis(300_000);
 

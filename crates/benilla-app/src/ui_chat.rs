@@ -203,7 +203,7 @@ impl Plugin for UiChatPlugin {
                     away::movement_clears_afk,
                     // After the clears, so a press that stamps the clock and drops the flag is
                     // settled before the idle timer reads it.
-                    idle::idle_handler,
+                    idle::idle_handler.run_if(|| idle::IDLE_SITS_AND_MARKS_AWAY),
                     input::drain_chat_input.in_set(ChatDrain),
                 )
                     .chain()
