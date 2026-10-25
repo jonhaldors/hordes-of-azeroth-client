@@ -220,7 +220,7 @@ pub(super) fn step(
     let mut fall_mean_vy = player.vel_y;
     // The speed the commands left, which a refused substep keeps.
     let vel_y_cmd = player.vel_y;
-    if !held && !anchored && (jumped || !grounded) {
+    if !held && !anchored && (jumped || !grounded) && !player.dash.flies_level() {
         let (end_vy, mean_vy) = fall_step(player.vel_y, dt, terminal);
         player.vel_y = end_vy;
         fall_mean_vy = mean_vy;

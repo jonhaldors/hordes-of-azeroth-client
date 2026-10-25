@@ -314,6 +314,7 @@ impl StandPending {
 #[derive(Resource, Default, PartialEq)]
 pub(crate) struct Player {
     pub(crate) active: bool,
+    pub(super) dash: super::dash::DashState,
     /// The modes the server has granted our mover.
     pub(super) modes: MoveModes,
     /// Autorun: the reference's input bit `0x1000` at `[MOVE+4]`, flipped by `ToggleAutoRun`
