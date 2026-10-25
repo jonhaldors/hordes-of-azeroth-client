@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use benilla_app::Objects;
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
@@ -9,7 +10,7 @@ use benilla_world::particles::buffer::{EffectVertex, WorldEffectDraw};
 use benilla_world::sky_order::Rung;
 use benilla_world::view::WorldCamera;
 
-use crate::server_draw::{Shape, TelegraphSpec};
+use crate::server_draw::{MarkSpec, Shape, TELEGRAPH_KEY_PREFIX};
 
 const LINE_PIECE_YARDS: f32 = 3.0;
 const LINE_HALF_WIDTH: f32 = 1.5;
@@ -21,6 +22,8 @@ const PIXELS_PER_YARD: f32 = 12.0;
 const MIN_TEXTURE_PIXELS: u32 = 64;
 const MAX_TEXTURE_PIXELS: u32 = 512;
 const SMALLEST_FILL: f32 = 0.02;
+const TEXTURE_SIZE_STEPS_PER_YARD: f32 = 2.0;
+const FOLLOW_MOVE_YARDS: f32 = 0.05;
 
 #[derive(Clone, Copy)]
 struct Palette {
@@ -28,18 +31,26 @@ struct Palette {
     wash: [f32; 3],
 }
 
-const PALETTES: [Palette; 3] = [
+const PALETTES: [Palette; 5] = [
     Palette {
         rim: [1.0, 0.30, 0.18],
         wash: [0.85, 0.04, 0.02],
     },
     Palette {
-        rim: [0.45, 0.75, 1.0],
-        wash: [0.10, 0.35, 0.90],
+        rim: [0.75, 0.55, 1.0],
+        wash: [0.35, 0.20, 0.90],
     },
     Palette {
         rim: [0.55, 1.0, 0.45],
         wash: [0.15, 0.75, 0.10],
+    },
+    Palette {
+        rim: [0.65, 0.90, 1.0],
+        wash: [0.20, 0.55, 0.95],
+    },
+    Palette {
+        rim: [0.85, 0.10, 0.10],
+        wash: [0.45, 0.02, 0.02],
     },
 ];
 
@@ -57,13 +68,13 @@ enum Layer {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct TextureKey {
     shape: Shape,
-    size_decimetres: u32,
+    size_steps: u32,
     style: u8,
     layer: Layer,
 }
 
-struct Telegraph {
-    spec: TelegraphSpec,
+struct Mark {
+    spec: MarkSpec,
     started: f32,
     surfaces: usize,
     verts: Vec<EffectVertex>,
@@ -71,15 +82,16 @@ struct Telegraph {
 
 #[derive(Resource, Default)]
 pub struct Telegraphs {
-    live: HashMap<u32, Telegraph>,
-    textures: HashMap<TextureKey, Handle<Image>>,
+    live: HashMap<String, Mark>,
+    baked: HashMap<TextureKey, Handle<Image>>,
+    loaded: HashMap<String, Handle<Image>>,
 }
 
 impl Telegraphs {
-    pub fn add(&mut self, spec: TelegraphSpec, now: f32) {
+    pub fn add(&mut self, spec: MarkSpec, now: f32) {
         self.live.insert(
-            spec.id,
-            Telegraph {
+            spec.key.clone(),
+            Mark {
                 spec,
                 started: now,
                 surfaces: 0,
@@ -88,12 +100,16 @@ impl Telegraphs {
         );
     }
 
-    pub fn remove(&mut self, id: u32) {
-        self.live.remove(&id);
+    pub fn remove(&mut self, key: &str) {
+        self.live.remove(key);
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear_all(&mut self) {
         self.live.clear();
+    }
+
+    pub fn clear_telegraphs(&mut self) {
+        self.live.retain(|key, _| !key.starts_with(TELEGRAPH_KEY_PREFIX));
     }
 }
 
@@ -102,7 +118,7 @@ fn line_length(size: f32) -> f32 {
     pieces * LINE_PIECE_YARDS
 }
 
-fn drawn_size(spec: &TelegraphSpec) -> f32 {
+fn drawn_size(spec: &MarkSpec) -> f32 {
     match spec.shape {
         Shape::Line => line_length(spec.size),
         Shape::Circle | Shape::Cone => spec.size.max(0.5),
@@ -116,7 +132,7 @@ fn extents(shape: Shape, size: f32) -> (f32, f32, f32, f32) {
     }
 }
 
-fn frame_for(spec: &TelegraphSpec) -> DecalFrame {
+fn frame_for(spec: &MarkSpec) -> DecalFrame {
     let (min_x, max_x, min_z, max_z) = extents(spec.shape, drawn_size(spec));
     let (sin, cos) = spec.yaw.sin_cos();
     DecalFrame {
@@ -186,7 +202,7 @@ fn texture_pixels(yards: f32) -> u32 {
 }
 
 fn bake(key: TextureKey) -> Image {
-    let size = key.size_decimetres as f32 / 10.0;
+    let size = key.size_steps as f32 / TEXTURE_SIZE_STEPS_PER_YARD;
     let (min_x, max_x, min_z, max_z) = extents(key.shape, size);
     let (width, height) = (texture_pixels(max_x - min_x), texture_pixels(max_z - min_z));
     let mut data = Vec::with_capacity((width * height * 4) as usize);
@@ -216,17 +232,28 @@ fn bake(key: TextureKey) -> Image {
     image
 }
 
+fn mpq_path(texture: &str) -> String {
+    format!("mpq://{}", texture.replace('\\', "/").to_lowercase())
+}
+
 impl Telegraphs {
-    fn texture(&mut self, images: &mut Assets<Image>, spec: &TelegraphSpec, layer: Layer) -> AssetId<Image> {
+    fn baked_texture(&mut self, images: &mut Assets<Image>, spec: &MarkSpec, layer: Layer) -> AssetId<Image> {
         let key = TextureKey {
             shape: spec.shape,
-            size_decimetres: (drawn_size(spec) * 10.0).round() as u32,
+            size_steps: (drawn_size(spec) * TEXTURE_SIZE_STEPS_PER_YARD).round().max(1.0) as u32,
             style: spec.style,
             layer,
         };
-        self.textures
+        self.baked
             .entry(key)
             .or_insert_with(|| images.add(bake(key)))
+            .id()
+    }
+
+    fn game_texture(&mut self, assets: &AssetServer, texture: &str) -> AssetId<Image> {
+        self.loaded
+            .entry(texture.to_string())
+            .or_insert_with(|| assets.load::<Image>(mpq_path(texture)))
             .id()
     }
 }
@@ -235,20 +262,39 @@ pub fn expire_telegraphs(mut telegraphs: ResMut<Telegraphs>, time: Res<Time>) {
     let now = time.elapsed_secs();
     telegraphs
         .live
-        .retain(|_, t| now - t.started < t.spec.duration);
+        .retain(|_, m| m.spec.duration.is_none_or(|d| now - m.started < d));
+}
+
+pub fn follow_marks(mut telegraphs: ResMut<Telegraphs>, objects: Objects, transforms: Query<&GlobalTransform>) {
+    for mark in telegraphs.live.values_mut() {
+        if mark.spec.follow == 0 {
+            continue;
+        }
+        let Some(at) = objects
+            .entity(mark.spec.follow)
+            .and_then(|e| transforms.get(e).ok())
+            .map(GlobalTransform::translation)
+        else {
+            continue;
+        };
+        if at.distance(mark.spec.at) > FOLLOW_MOVE_YARDS {
+            mark.spec.at = at;
+            mark.verts.clear();
+        }
+    }
 }
 
 pub fn project_telegraphs(mut telegraphs: ResMut<Telegraphs>, decals: WorldDecal) {
     let surfaces = decals.receiver_count();
-    for telegraph in telegraphs.live.values_mut() {
-        if telegraph.surfaces == surfaces && !telegraph.verts.is_empty() {
+    for mark in telegraphs.live.values_mut() {
+        if mark.surfaces == surfaces && !mark.verts.is_empty() {
             continue;
         }
-        telegraph.surfaces = surfaces;
-        telegraph.verts.clear();
-        let frame = frame_for(&telegraph.spec);
+        mark.surfaces = surfaces;
+        mark.verts.clear();
+        let frame = frame_for(&mark.spec);
         decals.project(
-            &mut telegraph.verts,
+            &mut mark.verts,
             &frame,
             |p| ((SLAB_YARDS - p.y.abs()) / SLAB_YARDS).clamp(0.0, 1.0),
             |x, z| frame.rect_uv(x, z),
@@ -259,21 +305,27 @@ pub fn project_telegraphs(mut telegraphs: ResMut<Telegraphs>, decals: WorldDecal
 pub fn push_telegraphs(
     mut telegraphs: ResMut<Telegraphs>,
     mut images: ResMut<Assets<Image>>,
+    assets: Res<AssetServer>,
     time: Res<Time>,
     cam: Query<Entity, With<WorldCamera>>,
     mut draw: WorldEffectDraw,
 ) {
     let Ok(cam) = cam.single() else { return };
     let now = time.elapsed_secs();
-    let ids: Vec<u32> = telegraphs.live.keys().copied().collect();
-    for id in ids {
-        let Some(spec) = telegraphs.live.get(&id).map(|t| t.spec) else {
+    let keys: Vec<String> = telegraphs.live.keys().cloned().collect();
+    for key in keys {
+        let Some(spec) = telegraphs.live.get(&key).map(|m| m.spec.clone()) else {
             continue;
         };
-        let outline = telegraphs.texture(&mut images, &spec, Layer::Outline);
-        let fill = (!spec.outline_only).then(|| telegraphs.texture(&mut images, &spec, Layer::Fill));
-        let telegraph = &telegraphs.live[&id];
-        if telegraph.verts.is_empty() {
+        let (outline, fill) = match &spec.texture {
+            Some(texture) => (telegraphs.game_texture(&assets, texture), None),
+            None => (
+                telegraphs.baked_texture(&mut images, &spec, Layer::Outline),
+                (!spec.outline_only).then(|| telegraphs.baked_texture(&mut images, &spec, Layer::Fill)),
+            ),
+        };
+        let mark = &telegraphs.live[&key];
+        if mark.verts.is_empty() {
             continue;
         }
         let white = |v: &EffectVertex, uv: [f32; 2]| EffectVertex {
@@ -281,24 +333,22 @@ pub fn push_telegraphs(
             uv,
             color: [1.0, 1.0, 1.0, v.color[3]],
         };
-        let mut batch = draw
+        let batch = draw
             .batch(cam, outline)
             .anchored(spec.at)
             .rung(Rung::RETICLE, Rung::DECAL_RASTER);
-        batch.extend(telegraph.verts.iter().map(|v| white(v, v.uv)));
+        let mut batch = if spec.additive { batch.additive() } else { batch };
+        batch.extend(mark.verts.iter().map(|v| white(v, v.uv)));
         batch.tris();
         let Some(fill) = fill else { continue };
-        let progress = ((now - telegraph.started) / spec.duration.max(0.05)).clamp(0.0, 1.0);
+        let progress = spec
+            .duration
+            .map_or(1.0, |d| ((now - mark.started) / d.max(0.05)).clamp(0.0, 1.0));
         let mut batch = draw
             .batch(cam, fill)
             .anchored(spec.at)
             .rung(Rung::RETICLE, Rung::DECAL_RASTER);
-        batch.extend(
-            telegraph
-                .verts
-                .iter()
-                .map(|v| white(v, fill_uv(spec.shape, v.uv, progress))),
-        );
+        batch.extend(mark.verts.iter().map(|v| white(v, fill_uv(spec.shape, v.uv, progress))));
         batch.tris();
     }
 }
@@ -338,12 +388,19 @@ mod tests {
     fn the_frame_points_forward_along_the_facing() {
         use benilla_assets::coords::wow_to_bevy;
         let facing = 0.7_f32;
-        let forward_wow = [facing.cos(), facing.sin(), 0.0];
-        let forward = wow_to_bevy(forward_wow);
+        let forward = wow_to_bevy([facing.cos(), facing.sin(), 0.0]);
         let (sin, cos) = facing.sin_cos();
         let z_in_frame = forward.z * cos + forward.x * sin;
         let x_in_frame = forward.x * cos - forward.z * sin;
         assert!((z_in_frame + 1.0).abs() < 1e-5);
         assert!(x_in_frame.abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_game_texture_loads_from_the_archive_path() {
+        assert_eq!(
+            mpq_path("World\\Goober\\RuneGroundBlue01.blp"),
+            "mpq://world/goober/runegroundblue01.blp"
+        );
     }
 }

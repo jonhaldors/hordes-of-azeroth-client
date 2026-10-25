@@ -9,7 +9,7 @@ use crate::nameplates::{add_plate_events, track_nameplates, SharedPlates};
 use crate::pad::{poll_pads, SharedController};
 use crate::snapshot::{capture_snapshot, SharedSnapshot};
 use crate::world_map::SharedMapAreas;
-use crate::telegraphs::{expire_telegraphs, project_telegraphs, push_telegraphs, Telegraphs};
+use crate::telegraphs::{expire_telegraphs, follow_marks, project_telegraphs, push_telegraphs, Telegraphs};
 use crate::world_fx::{apply_draw_lines, expire_kit_anchors, move_flights, tap_draw_lines, DisplayModels};
 
 pub struct HordesOfAzerothPlugin;
@@ -50,6 +50,7 @@ impl Plugin for HordesOfAzerothPlugin {
                         move_flights,
                         expire_kit_anchors,
                         expire_telegraphs,
+                        follow_marks,
                         project_telegraphs,
                     )
                         .chain(),

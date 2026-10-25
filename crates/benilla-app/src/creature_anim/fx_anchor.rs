@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::spell_visual::{FxClass, FxSlot, FxStage, SpellKitFx};
+use super::spell_visual::{state_kit_effects, FxClass, FxSlot, FxStage, SpellKitFx, SpellVisuals};
 use super::{KitPush, PlaySeq};
 use crate::entities::VisualAttached;
 
@@ -12,12 +12,13 @@ pub struct FxAnchor;
 pub enum AnchorFx {
     Kit { anchor: Entity, kit_id: u32 },
     Model { anchor: Entity, path: String },
+    Aura { anchor: Entity, spell_id: u32 },
 }
 
 impl AnchorFx {
     fn anchor(&self) -> Entity {
         match self {
-            AnchorFx::Kit { anchor, .. } | AnchorFx::Model { anchor, .. } => *anchor,
+            AnchorFx::Kit { anchor, .. } | AnchorFx::Model { anchor, .. } | AnchorFx::Aura { anchor, .. } => *anchor,
         }
     }
 }
@@ -32,6 +33,8 @@ pub(crate) fn play_anchor_fx(
     mut play_seq: ResMut<PlaySeq>,
     mut kits: MessageWriter<KitPush>,
     mut models: MessageWriter<SpellKitFx>,
+    visuals: Option<Res<SpellVisuals>>,
+    spells: Option<Res<crate::ui_action::Spells>>,
 ) {
     let mut pending = std::mem::take(&mut *waiting);
     pending.extend(requests.read().cloned().map(|r| (r, 0)));
@@ -64,6 +67,22 @@ pub(crate) fn play_anchor_fx(
                         path,
                     }],
                 });
+            }
+            AnchorFx::Aura { spell_id, .. } => {
+                let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
+                    continue;
+                };
+                let effects = state_kit_effects(spells, &visuals.0, spell_id);
+                if !effects.is_empty() {
+                    models.write(SpellKitFx::Begin {
+                        entity: anchor,
+                        spell_id,
+                        persistent: true,
+                        class: FxClass::AuraState,
+                        stage: FxStage::State,
+                        effects,
+                    });
+                }
             }
         }
     }

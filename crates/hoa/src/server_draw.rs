@@ -2,6 +2,8 @@ use benilla_assets::coords::wow_to_bevy;
 use bevy::prelude::Vec3;
 
 pub const DRAW_PREFIX: &str = "HOA~";
+pub const TELEGRAPH_KEY_PREFIX: &str = "t";
+const MARK_KEY_PREFIX: &str = "m";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Shape {
@@ -10,16 +12,19 @@ pub enum Shape {
     Line,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TelegraphSpec {
-    pub id: u32,
+#[derive(Clone, Debug, PartialEq)]
+pub struct MarkSpec {
+    pub key: String,
     pub shape: Shape,
     pub at: Vec3,
     pub yaw: f32,
     pub size: f32,
-    pub duration: f32,
+    pub duration: Option<f32>,
     pub outline_only: bool,
+    pub additive: bool,
     pub style: u8,
+    pub follow: u64,
+    pub texture: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -40,17 +45,29 @@ pub struct FlightSpec {
     pub scale: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AuraSpec {
+    pub key: u32,
+    pub spell_id: u32,
+    pub at: Vec3,
+    pub scale: f32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum DrawCommand {
-    Telegraph(TelegraphSpec),
-    RemoveTelegraph(u32),
+    Mark(MarkSpec),
+    RemoveMark(String),
     ClearTelegraphs,
+    ClearAll,
     Kit(KitSpec),
     Fly(FlightSpec),
     Land(u32),
+    Aura(AuraSpec),
+    RemoveAura(u32),
 }
 
 const OUTLINE_ONLY: u32 = 1;
+const ADDITIVE: u32 = 2;
 
 struct Fields<'a>(std::str::Split<'a, char>);
 
@@ -60,6 +77,10 @@ impl Fields<'_> {
     }
 
     fn u32(&mut self) -> Option<u32> {
+        self.0.next()?.parse().ok()
+    }
+
+    fn u64(&mut self) -> Option<u64> {
         self.0.next()?.parse().ok()
     }
 
@@ -75,38 +96,57 @@ impl Fields<'_> {
         let (x, y, z) = (self.f32()?, self.f32()?, self.f32()?);
         Some(wow_to_bevy([x, y, z]))
     }
+
+    fn shape(&mut self) -> Option<Shape> {
+        match self.u32()? {
+            0 => Some(Shape::Circle),
+            1 => Some(Shape::Cone),
+            2 => Some(Shape::Line),
+            _ => None,
+        }
+    }
+}
+
+fn mark(key: String, fields: &mut Fields, persistent_allowed: bool) -> Option<DrawCommand> {
+    let shape = fields.shape()?;
+    let at = fields.point()?;
+    let yaw = fields.f32()?;
+    let size = fields.f32()?;
+    let duration = fields.secs()?;
+    let flags = fields.u32().unwrap_or(0);
+    let style = fields.u32().unwrap_or(0) as u8;
+    let follow = fields.u64().unwrap_or(0);
+    let texture = fields.next_str().filter(|t| !t.is_empty()).map(str::to_string);
+    Some(DrawCommand::Mark(MarkSpec {
+        key,
+        shape,
+        at,
+        yaw,
+        size,
+        duration: (duration > 0.0 || !persistent_allowed).then_some(duration),
+        outline_only: flags & OUTLINE_ONLY != 0,
+        additive: flags & ADDITIVE != 0,
+        style,
+        follow,
+        texture,
+    }))
 }
 
 pub fn parse_line(line: &str) -> Option<DrawCommand> {
     let mut fields = Fields(line.strip_prefix(DRAW_PREFIX)?.split('~'));
     match fields.next_str()? {
         "tg" => {
-            let id = fields.u32()?;
-            let shape = match fields.u32()? {
-                0 => Shape::Circle,
-                1 => Shape::Cone,
-                2 => Shape::Line,
-                _ => return None,
-            };
-            let at = fields.point()?;
-            let yaw = fields.f32()?;
-            let size = fields.f32()?;
-            let duration = fields.secs()?;
-            let flags = fields.u32().unwrap_or(0);
-            let style = fields.u32().unwrap_or(0) as u8;
-            Some(DrawCommand::Telegraph(TelegraphSpec {
-                id,
-                shape,
-                at,
-                yaw,
-                size,
-                duration,
-                outline_only: flags & OUTLINE_ONLY != 0,
-                style,
-            }))
+            let key = format!("{TELEGRAPH_KEY_PREFIX}{}", fields.u32()?);
+            mark(key, &mut fields, false)
         }
-        "tgx" => Some(DrawCommand::RemoveTelegraph(fields.u32()?)),
+        "tgx" => Some(DrawCommand::RemoveMark(format!("{TELEGRAPH_KEY_PREFIX}{}", fields.u32()?))),
         "tgc" => Some(DrawCommand::ClearTelegraphs),
+        "clr" => Some(DrawCommand::ClearAll),
+        "mark" => {
+            let key = format!("{MARK_KEY_PREFIX}{}", fields.next_str()?);
+            mark(key, &mut fields, true)
+        }
+        "markx" => Some(DrawCommand::RemoveMark(format!("{MARK_KEY_PREFIX}{}", fields.next_str()?))),
         "kit" => Some(DrawCommand::Kit(KitSpec {
             kit_id: fields.u32()?,
             at: fields.point()?,
@@ -122,6 +162,13 @@ pub fn parse_line(line: &str) -> Option<DrawCommand> {
             scale: fields.f32()?,
         })),
         "land" => Some(DrawCommand::Land(fields.u32()?)),
+        "aura" => Some(DrawCommand::Aura(AuraSpec {
+            key: fields.u32()?,
+            spell_id: fields.u32()?,
+            at: fields.point()?,
+            scale: fields.f32().unwrap_or(1.0),
+        })),
+        "aurax" => Some(DrawCommand::RemoveAura(fields.u32()?)),
         _ => None,
     }
 }
@@ -130,28 +177,43 @@ pub fn parse_line(line: &str) -> Option<DrawCommand> {
 mod tests {
     use super::*;
 
+    fn marked(line: &str) -> MarkSpec {
+        match parse_line(line) {
+            Some(DrawCommand::Mark(spec)) => spec,
+            other => panic!("{line} is a mark, got {other:?}"),
+        }
+    }
+
     #[test]
     fn a_cone_telegraph_reads_every_field() {
-        let Some(DrawCommand::Telegraph(spec)) =
-            parse_line("HOA~tg~7~1~-8949.5~-132.25~83.5~1.5~10~2000~1~2")
-        else {
-            panic!("a telegraph line parses");
-        };
-        assert_eq!(spec.id, 7);
+        let spec = marked("HOA~tg~7~1~-8949.5~-132.25~83.5~1.5~10~2000~1~2");
+        assert_eq!(spec.key, "t7");
         assert_eq!(spec.shape, Shape::Cone);
         assert_eq!(spec.at, wow_to_bevy([-8949.5, -132.25, 83.5]));
-        assert_eq!((spec.yaw, spec.size, spec.duration), (1.5, 10.0, 2.0));
+        assert_eq!((spec.yaw, spec.size, spec.duration), (1.5, 10.0, Some(2.0)));
         assert!(spec.outline_only);
+        assert!(!spec.additive);
         assert_eq!(spec.style, 2);
+        assert_eq!(spec.follow, 0);
+        assert_eq!(spec.texture, None);
     }
 
     #[test]
     fn flags_and_style_are_optional() {
-        let Some(DrawCommand::Telegraph(spec)) = parse_line("HOA~tg~1~0~0~0~0~0~4~1500") else {
-            panic!("a short telegraph line parses");
-        };
+        let spec = marked("HOA~tg~1~0~0~0~0~0~4~1500");
         assert!(!spec.outline_only);
         assert_eq!(spec.style, 0);
+    }
+
+    #[test]
+    fn a_mark_without_time_stays_and_can_follow_and_wear_a_texture() {
+        let spec = marked("HOA~mark~ley3~0~1~2~3~0.5~5~0~2~1~4294967297~World\\Goober\\RuneGroundBlue01.blp");
+        assert_eq!(spec.key, "mley3");
+        assert_eq!(spec.duration, None);
+        assert!(spec.additive);
+        assert_eq!(spec.follow, 4_294_967_297);
+        assert_eq!(spec.texture.as_deref(), Some("World\\Goober\\RuneGroundBlue01.blp"));
+        assert_eq!(parse_line("HOA~markx~ley3"), Some(DrawCommand::RemoveMark("mley3".into())));
     }
 
     #[test]
@@ -174,6 +236,6 @@ mod tests {
         assert_eq!(parse_line("BONK~hearth~1"), None);
         assert_eq!(parse_line("HOA~tg~1~9~0~0~0~0~4~1500"), None);
         assert_eq!(parse_line("HOA~kit~92~1~2"), None);
-        assert_eq!(parse_line("HOA~tgx~12"), Some(DrawCommand::RemoveTelegraph(12)));
+        assert_eq!(parse_line("HOA~tgx~12"), Some(DrawCommand::RemoveMark("t12".into())));
     }
 }

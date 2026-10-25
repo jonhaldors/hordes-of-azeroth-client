@@ -56,6 +56,12 @@ pub fn tap_draw_lines(mut tap: ResMut<ChatTap>) {
     }
 }
 
+#[derive(Component)]
+pub struct AuraAnchor {
+    key: u32,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn apply_draw_lines(
     mut commands: Commands,
     mut lines: MessageReader<TappedLine>,
@@ -63,6 +69,7 @@ pub fn apply_draw_lines(
     mut fx: MessageWriter<AnchorFx>,
     displays: Res<DisplayModels>,
     flights: Query<(Entity, &Flight)>,
+    auras: Query<(Entity, &AuraAnchor)>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs();
@@ -71,14 +78,42 @@ pub fn apply_draw_lines(
             continue;
         };
         match command {
-            DrawCommand::Telegraph(spec) => telegraphs.add(spec, now),
-            DrawCommand::RemoveTelegraph(id) => telegraphs.remove(id),
-            DrawCommand::ClearTelegraphs => telegraphs.clear(),
+            DrawCommand::Mark(spec) => telegraphs.add(spec, now),
+            DrawCommand::RemoveMark(key) => telegraphs.remove(&key),
+            DrawCommand::ClearTelegraphs => telegraphs.clear_telegraphs(),
+            DrawCommand::ClearAll => {
+                telegraphs.clear_all();
+                for (entity, _) in &auras {
+                    commands.entity(entity).despawn();
+                }
+            }
             DrawCommand::Kit(kit) => play_kit(&mut commands, &mut fx, kit, now),
             DrawCommand::Fly(flight) => fly(&mut commands, &mut fx, &displays, flight, now),
             DrawCommand::Land(id) => {
                 for (entity, flight) in &flights {
                     if flight.id == id {
+                        commands.entity(entity).despawn();
+                    }
+                }
+            }
+            DrawCommand::Aura(aura) => {
+                let transform = Transform::from_translation(aura.at).with_scale(Vec3::splat(aura.scale));
+                let anchor = commands
+                    .spawn((
+                        FxAnchor,
+                        transform,
+                        GlobalTransform::from(transform),
+                        AuraAnchor { key: aura.key },
+                    ))
+                    .id();
+                fx.write(AnchorFx::Aura {
+                    anchor,
+                    spell_id: aura.spell_id,
+                });
+            }
+            DrawCommand::RemoveAura(key) => {
+                for (entity, anchor) in &auras {
+                    if anchor.key == key {
                         commands.entity(entity).despawn();
                     }
                 }
@@ -168,3 +203,5 @@ pub fn expire_kit_anchors(mut commands: Commands, anchors: Query<(Entity, &KitAn
         }
     }
 }
+
+

@@ -472,6 +472,16 @@ pub(crate) fn held_strike_sound(
     resolve_stages(spells, visuals, spell_id, || None)?.strike_sound
 }
 
+pub(super) fn state_kit_effects(
+    spells: &crate::ui_action::Spells,
+    visuals: &SpellVisualCatalog,
+    spell_id: u32,
+) -> Vec<FxSlot> {
+    resolve_kit(spells, visuals, spell_id, |s| s.state, || None)
+        .map(|kit| resolve_kit_effects(visuals, &kit))
+        .unwrap_or_default()
+}
+
 /// A kit's populated effect slots; a slot with no `SpellVisualEffectName` path is skipped.
 fn resolve_kit_effects(visuals: &SpellVisualCatalog, kit: &VisualKit) -> Vec<FxSlot> {
     kit.effects()
