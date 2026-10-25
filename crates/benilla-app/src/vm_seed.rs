@@ -16,6 +16,13 @@ pub fn seed_every_vm(app: &mut App, seed: impl Fn(&UiScript) + 'static) {
         .push(Box::new(seed));
 }
 
+pub fn run_hosted<R>(world: &mut World, f: impl FnOnce(Option<&mut UiScript>) -> R) -> R {
+    let mut state = bevy::ecs::system::SystemState::<crate::script_calls::HostedVm>::new(world);
+    let result = state.get_mut(world).run(f);
+    state.apply(world);
+    result
+}
+
 pub(crate) fn seed(world: &World, script: &UiScript) {
     if let Some(seeds) = world.get_non_send_resource::<VmSeeds>() {
         for seed in &seeds.0 {
