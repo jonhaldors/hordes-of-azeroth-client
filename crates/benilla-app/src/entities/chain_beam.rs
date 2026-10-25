@@ -120,13 +120,23 @@ fn jitter(rng: &mut u32) -> f32 {
 /// The caster's end (`0x6ec6f0`): the `$CSL` marker at the live pose, else
 /// `base + 0.75 × modelHeight × modelScale`. Other ends anchor at the spell's field-9 attachment
 /// through the missile's resolver, as `0x6ec780` and `0x61ceb0` read the same table the same way.
+const CHEST_ATTACHMENT: u16 = 34;
+
 fn caster_world_pos(
     caster: Entity,
+    from_chest: bool,
     units: &super::missile::AttachPosQuery,
     joints: &Query<&GlobalTransform>,
     heights: &Query<&OverheadFallback>,
 ) -> Option<Vec3> {
     let (base, bones, pose) = units.get(caster).ok()?;
+    let chest = bones.zip(pose).filter(|_| from_chest).and_then(|(b, p)| {
+        let &(bone, offset) = b.points.get(&CHEST_ATTACHMENT)?;
+        p.posed_point(joints.get(p.joints_root).ok()?, bone, offset)
+    });
+    if chest.is_some() {
+        return chest;
+    }
     let marker = bones.zip(pose).and_then(|(b, p)| {
         let &(bone, offset) = b.markers.get(b"$CSL")?;
         p.posed_point(joints.get(p.joints_root).ok()?, bone, offset)
@@ -386,6 +396,7 @@ pub(crate) fn simulate_chain_beams(
     heights: Query<&OverheadFallback>,
     mut beams: Query<(Entity, &mut ChainBeam)>,
     mut scratch: Local<Vec<Vec3>>,
+    stores: Query<&crate::net::ObjectStore>,
 ) {
     let Ok((cam, cam_xf)) = world_cam.single() else {
         return;
@@ -431,7 +442,10 @@ pub(crate) fn simulate_chain_beams(
             // A missing endpoint hides only this hop (`SetVisible(handle, 0)`).
             let dest = [dest_tag, CHAIN_ATTACH_FALLBACK];
             let from = if i == 0 {
-                caster_world_pos(nodes[0], &units, &joints, &heights)
+                let creature = stores.get(nodes[0]).is_ok_and(|s| {
+                    s.0.created_as() == Some(benilla_protocol::messages::ObjectType::Unit)
+                });
+                caster_world_pos(nodes[0], creature, &units, &joints, &heights)
             } else {
                 super::missile::attach_world_pos(nodes[i], dest, &units, &joints)
             };
