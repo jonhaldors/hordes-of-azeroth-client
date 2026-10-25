@@ -126,6 +126,8 @@ pub(crate) fn read_damage_text_font(script: &benilla_ui::script::UiScript) -> Da
 /// one unit is dropped outright.
 const MAX_PER_UNIT: usize = 4;
 
+const COMBAT_TEXT_SPREADS_APART: bool = false;
+
 /// World text draws beneath all UI, as the reference draws it in the world scene: the append
 /// lane's bottom band ([`crate::ui_pass::overlay_z`]).
 const Z_WORLD_TEXT: u128 = overlay_z::WORLD_TEXT;
@@ -312,8 +314,13 @@ pub(crate) fn float_combat_text(
                 .y
                 .clamp(hh.min(viewport.y - hh), (viewport.y - hh).max(hh));
             let desired = Rect::new(cx - hw, cy - hh, cx + hw, cy + hh);
-            let solved = bucket.resolve(desired, viewport);
-            bucket.claim(solved);
+            let solved = if COMBAT_TEXT_SPREADS_APART {
+                let solved = bucket.resolve(desired, viewport);
+                bucket.claim(solved);
+                solved
+            } else {
+                desired
+            };
             let target = (solved.min + solved.max) * 0.5;
             let shift = target - Vec2::new((b.min.x + b.max.x) * 0.5, b.max.y);
             if shift != Vec2::ZERO {
