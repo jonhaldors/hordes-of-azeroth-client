@@ -178,7 +178,7 @@ const NEVER_INDEXED: &[&str] = &["Interface\\AddOns"];
 /// and `Interface\FrameXML` below the install folder aside to `%s.old` before it reads anything
 /// (`0x51fb50`, at `0x46a8eb`) and empties the index (`0x51fbe3`), so their files never answer.
 /// benilla never writes into the install, so it leaves them unread instead.
-const MOVED_ASIDE: &[&str] = &["Interface\\GlueXML", "Interface\\FrameXML"];
+const MOVED_ASIDE: &[&str] = &["Interface\\FrameXML"];
 
 /// The key a name is looked up and entered by: ASCII case folded, as `SStrCmpI` compares
 /// (`0x647f37`). A `/` stays: the keys hold `\`, so a name written with `/` never matches, though
