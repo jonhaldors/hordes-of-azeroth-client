@@ -1,7 +1,9 @@
 mod interact;
 mod interact_lua;
 mod lua_api;
+mod nameplates;
 mod snapshot;
+mod unit_lua;
 mod world_map;
 
 pub mod plugin;

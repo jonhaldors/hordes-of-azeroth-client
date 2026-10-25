@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::f32::consts::TAU;
 use std::rc::Rc;
 
@@ -41,11 +42,22 @@ pub struct CreatureView {
     pub position: WowPosition,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AuraEntry {
+    pub slot: u8,
+    pub spell_id: u32,
+    pub stacks: u8,
+    pub harmful: bool,
+}
+
 #[derive(Default, Debug)]
 pub struct Snapshot {
     pub player: Option<PlayerView>,
     pub map_id: u32,
     pub creatures: Vec<CreatureView>,
+    pub player_guid: u64,
+    pub target_guid: u64,
+    pub auras: HashMap<u64, Vec<AuraEntry>>,
 }
 
 impl Snapshot {
@@ -72,6 +84,22 @@ fn creature_entry(unit_guid: u64) -> Option<u32> {
         .flatten()
 }
 
+fn unit_auras(fields: &benilla_app::ObjectFields) -> Vec<AuraEntry> {
+    fields
+        .unit_auras()
+        .map(|aura| AuraEntry {
+            slot: aura.slot,
+            spell_id: aura.spell_id,
+            stacks: aura.stacks,
+            harmful: !aura.is_helpful(),
+        })
+        .collect()
+}
+
+pub fn guid_text(guid: u64) -> String {
+    format!("0x{:016X}", guid)
+}
+
 pub fn capture_snapshot(
     objects: Objects,
     bodies: Query<&GlobalTransform>,
@@ -90,9 +118,25 @@ pub fn capture_snapshot(
                 facing: facing_from_rotation(pose.rotation),
             }
         });
+    let me = objects.player();
+    snapshot.player_guid = 0;
+    snapshot.target_guid = 0;
     snapshot.creatures.clear();
-    for (unit_guid, entity, _) in objects.iter() {
-        let Some(entry) = creature_entry(unit_guid) else {
+    snapshot.auras.clear();
+    for (unit_guid, entity, fields) in objects.iter() {
+        let is_me = Some(entity) == me;
+        if is_me {
+            snapshot.player_guid = unit_guid;
+            snapshot.target_guid = fields.unit_target().unwrap_or(0);
+        }
+        let entry = creature_entry(unit_guid);
+        if is_me || entry.is_some() {
+            let auras = unit_auras(fields);
+            if !auras.is_empty() {
+                snapshot.auras.insert(unit_guid, auras);
+            }
+        }
+        let Some(entry) = entry else {
             continue;
         };
         if let Ok(body) = bodies.get(entity) {
@@ -155,6 +199,7 @@ mod tests {
                     position: at(-10.0),
                 },
             ],
+            ..Default::default()
         };
         assert_eq!(snapshot.closest_creature(7), Some((at(-10.0), 10.0)));
         assert_eq!(snapshot.closest_creature(8), None);

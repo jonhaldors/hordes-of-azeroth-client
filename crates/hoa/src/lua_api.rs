@@ -4,7 +4,9 @@ use bevy::prelude::*;
 
 use crate::interact::SharedInteract;
 use crate::interact_lua::register_interact;
+use crate::nameplates::SharedPlates;
 use crate::snapshot::SharedSnapshot;
+use crate::unit_lua::register_unit_api;
 use crate::world_map::SharedMapAreas;
 
 #[derive(Clone)]
@@ -12,15 +14,18 @@ pub struct LuaHosts {
     pub snapshot: SharedSnapshot,
     pub areas: SharedMapAreas,
     pub interact: SharedInteract,
+    pub plates: SharedPlates,
     pub scripted_login: Option<(String, String)>,
 }
 
 impl LuaHosts {
     pub fn seed(&self, script: &UiScript) {
+        let lua = script.lua();
         let seeded = match script.vm_kind() {
-            VmKind::Glue => self.seed_glue(script.lua()),
-            VmKind::InGame => register_classic_api(script.lua(), &self.snapshot, &self.areas)
-                .and_then(|()| register_interact(script.lua(), &self.interact)),
+            VmKind::Glue => self.seed_glue(lua),
+            VmKind::InGame => register_classic_api(lua, &self.snapshot, &self.areas)
+                .and_then(|()| register_interact(lua, &self.interact))
+                .and_then(|()| register_unit_api(lua, &self.snapshot, &self.plates)),
         };
         if let Err(error) = seeded {
             warn!("Hordes of Azeroth: Lua functions not installed: {error}");
