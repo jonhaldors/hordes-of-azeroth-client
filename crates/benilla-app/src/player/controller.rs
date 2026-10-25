@@ -587,6 +587,7 @@ pub(super) fn control(
         );
         let driven_speeds = body.single().ok().and_then(|q| q.6).map(|s| s.0);
         let holding_still = dash::held_still(driven_speeds);
+        player.dash.held = holding_still;
         if let Some(driven) = driven_speeds {
             match player.dash.watch_run_speed(driven.run) {
                 dash::RunSpeedEdge::DashStarted => {

@@ -12,6 +12,19 @@ pub(crate) struct DashState {
     last_run_speed: f32,
     standing_dash_left: f32,
     air_dash_left: f32,
+    pub(super) held: bool,
+}
+
+pub(super) fn freeze_world_while_held(
+    player: Res<super::Player>,
+    mut world_clock: ResMut<Time<Virtual>>,
+) {
+    let freeze = player.active && player.dash.held;
+    if freeze && !world_clock.is_paused() {
+        world_clock.pause();
+    } else if !freeze && world_clock.is_paused() {
+        world_clock.unpause();
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
