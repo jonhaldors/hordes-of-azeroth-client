@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::interact::{update_interact, SharedInteract};
 use crate::lua_api::{install_lua_api, InstalledSession};
 use crate::snapshot::{capture_snapshot, SharedSnapshot};
 use crate::world_map::SharedMapAreas;
@@ -10,9 +11,13 @@ impl Plugin for HordesOfAzerothPlugin {
     fn build(&self, app: &mut App) {
         app.insert_non_send_resource(SharedSnapshot::default())
             .insert_non_send_resource(SharedMapAreas::from_install())
+            .insert_non_send_resource(SharedInteract::default())
             .init_resource::<InstalledSession>()
             .add_systems(Startup, (name_window, announce_addon_folder))
-            .add_systems(Last, (capture_snapshot, install_lua_api).chain());
+            .add_systems(
+                Last,
+                (capture_snapshot, update_interact, install_lua_api).chain(),
+            );
     }
 }
 

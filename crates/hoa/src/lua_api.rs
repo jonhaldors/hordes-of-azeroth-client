@@ -2,6 +2,8 @@ use benilla_mlua::{Lua, MultiValue, Result as LuaResult, Table};
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
+use crate::interact::SharedInteract;
+use crate::interact_lua::register_interact;
 use crate::snapshot::SharedSnapshot;
 use crate::world_map::SharedMapAreas;
 
@@ -9,9 +11,10 @@ use crate::world_map::SharedMapAreas;
 pub struct InstalledSession(Option<u64>);
 
 pub fn install_lua_api(world: &mut World) {
-    let (Some(snapshot), Some(areas)) = (
+    let (Some(snapshot), Some(areas), Some(interact)) = (
         world.get_non_send_resource::<SharedSnapshot>().cloned(),
         world.get_non_send_resource::<SharedMapAreas>().cloned(),
+        world.get_non_send_resource::<SharedInteract>().cloned(),
     ) else {
         return;
     };
@@ -22,13 +25,19 @@ pub fn install_lua_api(world: &mut World) {
     if world.resource::<InstalledSession>().0 == Some(session) {
         return;
     }
-    if let Err(error) = register(script.lua(), &snapshot, &areas) {
+    let installed = register_classic_api(script.lua(), &snapshot, &areas)
+        .and_then(|()| register_interact(script.lua(), &interact));
+    if let Err(error) = installed {
         warn!("Hordes of Azeroth: Lua functions not installed: {error}");
     }
     world.resource_mut::<InstalledSession>().0 = Some(session);
 }
 
-fn register(lua: &Lua, snapshot: &SharedSnapshot, areas: &SharedMapAreas) -> LuaResult<()> {
+fn register_classic_api(
+    lua: &Lua,
+    snapshot: &SharedSnapshot,
+    areas: &SharedMapAreas,
+) -> LuaResult<()> {
     let globals = lua.globals();
     globals.set("UnitPosition", unit_position(lua, snapshot.clone())?)?;
     globals.set("GetPlayerFacing", player_facing(lua, snapshot.clone())?)?;
