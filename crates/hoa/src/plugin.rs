@@ -1,9 +1,11 @@
 use bevy::prelude::*;
 
+use crate::controller_lua::deliver_pad_events;
 use crate::interact::{update_interact, SharedInteract};
 use crate::keys::{capture_typing, SharedTyping};
 use crate::lua_api::{scripted_login_from_env, LuaHosts};
 use crate::nameplates::{add_plate_events, track_nameplates, SharedPlates};
+use crate::pad::{poll_pads, SharedController};
 use crate::snapshot::{capture_snapshot, SharedSnapshot};
 use crate::world_map::SharedMapAreas;
 
@@ -18,13 +20,17 @@ impl Plugin for HordesOfAzerothPlugin {
             interact: SharedInteract::default(),
             plates: SharedPlates::default(),
             typing: SharedTyping::default(),
+            controller: SharedController::default(),
             scripted_login: scripted_login_from_env(),
         };
-        app.insert_non_send_resource(hosts.snapshot.clone())
+        app.add_plugins(bevy::gilrs::GilrsPlugin)
+            .insert_non_send_resource(hosts.snapshot.clone())
             .insert_non_send_resource(hosts.interact.clone())
             .insert_non_send_resource(hosts.plates.clone())
             .insert_non_send_resource(hosts.typing.clone())
+            .insert_non_send_resource(hosts.controller.clone())
             .add_systems(Startup, (name_window, announce_addon_folder))
+            .add_systems(PreUpdate, poll_pads)
             .add_systems(
                 Last,
                 (
@@ -32,6 +38,7 @@ impl Plugin for HordesOfAzerothPlugin {
                     update_interact,
                     track_nameplates,
                     capture_typing,
+                    deliver_pad_events,
                 )
                     .chain(),
             );

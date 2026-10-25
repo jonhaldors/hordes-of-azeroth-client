@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use benilla_mlua::Table;
-use benilla_ui::script::{add_in_game_event, ScriptValue, UiScript, VmKind};
+use benilla_ui::script::{add_in_game_event, ScriptValue, VmKind};
 use bevy::prelude::*;
 
 const TOKEN_PREFIX: &str = "nameplate";
@@ -114,22 +114,21 @@ pub fn track_nameplates(world: &mut World) {
     let Some(shared) = world.get_non_send_resource::<SharedPlates>().cloned() else {
         return;
     };
-    let Some(mut script) = world.get_non_send_resource_mut::<UiScript>() else {
-        return;
-    };
-    if script.vm_kind() != VmKind::InGame {
-        return;
-    }
-    let session = script.session();
-    let live = script.nameplate_frames();
-    let leaving = shared.0.borrow().leaving(session, &live);
-    for token in leaving {
-        script.fire_event(PLATE_REMOVED, vec![ScriptValue::Str(token)]);
-    }
-    let changes = shared.0.borrow_mut().sync(session, live);
-    for token in changes.added {
-        script.fire_event(PLATE_ADDED, vec![ScriptValue::Str(token)]);
-    }
+    benilla_app::run_hosted(world, |script| {
+        let Some(script) = script.filter(|s| s.vm_kind() == VmKind::InGame) else {
+            return;
+        };
+        let session = script.session();
+        let live = script.nameplate_frames();
+        let leaving = shared.0.borrow().leaving(session, &live);
+        for token in leaving {
+            script.fire_event(PLATE_REMOVED, vec![ScriptValue::Str(token)]);
+        }
+        let changes = shared.0.borrow_mut().sync(session, live);
+        for token in changes.added {
+            script.fire_event(PLATE_ADDED, vec![ScriptValue::Str(token)]);
+        }
+    });
 }
 
 #[cfg(test)]

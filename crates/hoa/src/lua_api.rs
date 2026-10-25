@@ -2,10 +2,12 @@ use benilla_mlua::{Lua, MultiValue, Result as LuaResult, Table};
 use benilla_ui::script::{UiScript, VmKind};
 use bevy::prelude::*;
 
+use crate::controller_lua::register_controller_api;
 use crate::interact::SharedInteract;
 use crate::interact_lua::register_interact;
 use crate::keys::{register_keys_api, SharedTyping};
 use crate::nameplates::SharedPlates;
+use crate::pad::SharedController;
 use crate::snapshot::SharedSnapshot;
 use crate::unit_lua::register_unit_api;
 use crate::world_map::SharedMapAreas;
@@ -17,6 +19,7 @@ pub struct LuaHosts {
     pub interact: SharedInteract,
     pub plates: SharedPlates,
     pub typing: SharedTyping,
+    pub controller: SharedController,
     pub scripted_login: Option<(String, String)>,
 }
 
@@ -29,7 +32,8 @@ impl LuaHosts {
                 .and_then(|()| register_interact(lua, &self.interact))
                 .and_then(|()| register_unit_api(lua, &self.snapshot, &self.plates))
                 .and_then(|()| register_keys_api(lua, &self.typing)),
-        };
+        }
+        .and_then(|()| register_controller_api(lua, &self.controller));
         if let Err(error) = seeded {
             warn!("Hordes of Azeroth: Lua functions not installed: {error}");
         }
