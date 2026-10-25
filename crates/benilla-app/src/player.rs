@@ -53,6 +53,7 @@ mod edge;
 mod embody;
 mod flags;
 mod follow;
+pub(crate) mod pad_steer;
 
 mod gait;
 mod input;
@@ -330,6 +331,7 @@ impl Plugin for PlayerPlugin {
         app.add_observer(camera::on_cvar);
         app.add_observer(camera_dynamics::on_cvar);
         app.init_resource::<camera::LookConfig>();
+        app.init_resource::<pad_steer::PadSteer>();
         app.init_resource::<camera_zoom::ZoomLimit>();
         app.init_resource::<camera::FollowConfig>();
         app.init_resource::<OwnControlLost>();

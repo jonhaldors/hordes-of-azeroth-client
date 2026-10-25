@@ -591,6 +591,7 @@ pub(crate) struct CameraControl {
     pub(super) terrain_tilt: TerrainTilt,
     /// `cameraBobbing`'s session latch and eye offset ([`HeadBob`]).
     pub(super) head_bob: HeadBob,
+    pub(super) pad_holds_yaw: bool,
     /// The sweep clipped the camera on the frame just seated: the reference's
     /// `[cam+0x90] & 0x30000`, written only by the solver `0x50e570`, [`SmartPivot`]'s sixth
     /// conjunct; the look session reads it a frame later, as `0x50fee0` (from `0x514446`) does.
@@ -1313,7 +1314,7 @@ pub(super) fn seat_camera(
     // held drag takes no carry. The auto-follow writes an absolute yaw, where the reference stores
     // the offset and re-adds the facing at render time (`0x50f7f2`): the same picture, so Never
     // leaves this carry running.
-    let look_held = rig.look.is_some();
+    let look_held = rig.look.is_some() || rig.pad_holds_yaw;
     if !look_held {
         cam.yaw += turn_delta;
     }

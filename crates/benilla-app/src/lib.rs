@@ -208,6 +208,7 @@ pub use bevy::app::AppExit;
 // A crate on top of benilla reads objects and interacts through these, with no protocol dependency.
 pub use benilla_protocol::{messages::ObjectType, ObjectFields};
 pub use net::Objects;
+pub use player::pad_steer::PadSteer;
 pub use target::Interact;
 pub use vm_seed::{run_hosted, seed_every_vm};
 

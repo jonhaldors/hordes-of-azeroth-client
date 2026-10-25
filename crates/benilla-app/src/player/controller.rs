@@ -321,6 +321,7 @@ pub(super) fn control(
         Option<Res<crate::chr_classes::ChrClassTable>>,
         // The predicted stand state `[player+0x1d68]`, which the posture verbs write.
         ResMut<super::StandPending>,
+        Res<super::pad_steer::PadSteer>,
     ),
     mut commands: Commands,
     mut player: ResMut<Player>,
@@ -458,6 +459,18 @@ pub(super) fn control(
         &mut cam,
         dt,
         look_cfg,
+        pointer.2.move_speed,
+        zoom_max,
+    );
+    let steer = *speed_capsule.12;
+    let face_now = player.face_yaw;
+    pad_steer::steer_view(
+        &mut player.pad_hold,
+        face_now,
+        &mut rig,
+        &mut cam,
+        &steer,
+        dt,
         pointer.2.move_speed,
         zoom_max,
     );
@@ -605,6 +618,7 @@ pub(super) fn control(
             }
         }
         let axes = player.dash.steer(axes, dt, holding_still);
+        let axes = pad_steer::steer_axes(axes, &steer, may_translate);
         let input::MoveAxes {
             fwd: fwd_axis,
             side: side_axis,
@@ -653,6 +667,16 @@ pub(super) fn control(
             player.face_yaw += drunk_wobble;
             turn_delta = drunk_wobble;
         }
+        let mut steered_face = player.face_yaw;
+        pad_steer::steer_facing(
+            &mut player.pad_hold,
+            &mut steered_face,
+            &cam,
+            &steer,
+            may_translate && may_turn,
+        );
+        player.face_yaw = steered_face;
+        rig.pad_holds_yaw = player.pad_hold.holding();
         let face_rot = Quat::from_rotation_y(player.face_yaw);
         let move_fwd = flat(face_rot * Vec3::NEG_Z);
         let move_right = flat(face_rot * Vec3::X);
@@ -736,8 +760,9 @@ pub(super) fn control(
         // `Jump` (`0x513bd0`) inlines `0x5144e0` and `0x514560`, which is `may_translate` term for
         // term: health, root and stand state 7. Hover's refusal is the movement handler's
         // (`0x7c623a`), which keeps the mounted flourish reachable while hovering.
-        let mut want_jump =
-            binds.fired(crate::bindings::Input::Jump) && may_translate && !holding_still;
+        let mut want_jump = (binds.fired(crate::bindings::Input::Jump) || steer.jump)
+            && may_translate
+            && !holding_still;
 
         // Swim or walk, latched with hysteresis at the `0x6030c0` boundary against flicker.
         let surface_y = swim::surface_over_feet(world, player.pos);
