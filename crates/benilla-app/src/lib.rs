@@ -187,6 +187,7 @@ mod ui_unit;
 mod ui_world_map;
 mod video;
 mod vm_pass;
+mod vm_seed;
 mod vplates;
 mod wdb;
 mod weapon_trail;
@@ -208,6 +209,7 @@ pub use bevy::app::AppExit;
 pub use benilla_protocol::{messages::ObjectType, ObjectFields};
 pub use net::Objects;
 pub use target::Interact;
+pub use vm_seed::seed_every_vm;
 
 /// Builds and runs the client app. `build` is the launcher's compile-time git stamp, passed in as
 /// data so the sha lives in the shim's fingerprint and a commit does not recompile this crate.

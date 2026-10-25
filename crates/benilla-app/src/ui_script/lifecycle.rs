@@ -173,6 +173,7 @@ fn new_vm<E: std::fmt::Display>(
         script.lua().srand(1);
     }
     install_addon_asset_resolvers(world, &mut script);
+    crate::vm_seed::seed(world, &script);
     info!("ui_script: new VM, session {}", script.session());
     Some(script)
 }
