@@ -13,22 +13,24 @@ use super::*;
 /// Falling-drop streaks: one fixed-size triangle per drop, tilted at the apex only.
 pub(super) fn push_streaks(out: &mut Vec<EffectVertex>, drops: &[Drop], tilt: Quat, cam: Vec3) {
     let white = [1.0, 1.0, 1.0, 1.0];
+    out.reserve(drops.len().min(POOL) * 3);
     for d in drops.iter().take(POOL) {
         let anti_vel = -d.vel.normalize_or(Vec3::NEG_Y);
         let to_cam = (cam - d.pos).normalize_or(Vec3::X);
         let right = to_cam.cross(anti_vel).normalize_or(Vec3::X) * STREAK_HALF_W;
         let apex = d.pos + tilt * (anti_vel * STREAK_TAIL);
-        for (pos, uv) in [
-            (d.pos - right, [0.0, 1.0]),
-            (d.pos + right, [1.0, 1.0]),
-            (apex, [0.5, 0.0]),
-        ] {
-            out.push(EffectVertex {
+        out.extend_from_slice(
+            &[
+                (d.pos - right, [0.0, 1.0]),
+                (d.pos + right, [1.0, 1.0]),
+                (apex, [0.5, 0.0]),
+            ]
+            .map(|(pos, uv)| EffectVertex {
                 pos: pos.to_array(),
                 uv,
                 color: white,
-            });
-        }
+            }),
+        );
     }
 }
 
@@ -99,18 +101,19 @@ pub(super) fn push_flakes(
         let r = view.right * half;
         let u = view.up * half;
         // Perimeter order (bl, br, tr, tl) for the stream's quad-index pattern.
-        for (pos, uv) in [
-            (to_flake - r - u, [0.0, 1.0]),
-            (to_flake + r - u, [1.0, 1.0]),
-            (to_flake + r + u, [1.0, 0.0]),
-            (to_flake - r + u, [0.0, 0.0]),
-        ] {
-            out.push(EffectVertex {
+        out.extend_from_slice(
+            &[
+                (to_flake - r - u, [0.0, 1.0]),
+                (to_flake + r - u, [1.0, 1.0]),
+                (to_flake + r + u, [1.0, 0.0]),
+                (to_flake - r + u, [0.0, 0.0]),
+            ]
+            .map(|(pos, uv)| EffectVertex {
                 pos: pos.to_array(),
                 uv,
                 color: [1.0, 1.0, 1.0, alpha],
-            });
-        }
+            }),
+        );
     };
     for d in drops.iter().take(POOL) {
         sprite(d.pos, (d.age / SNOW_FADE_IN).clamp(0.0, 1.0));

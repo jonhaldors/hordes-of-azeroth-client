@@ -370,7 +370,7 @@ fn extract_effects(
         }
     }
     meta.vertices.clear();
-    meta.vertices.extend(quads.verts.iter().copied());
+    meta.vertices.values_mut().extend_from_slice(&quads.verts);
     meta.draws.clear();
     meta.draws.extend(quads.draws.iter().map(|d| ExtractedDraw {
         cam: d.cam,
@@ -486,13 +486,19 @@ fn prepare_effects(
     let meta = &mut *meta;
     // Subtract the exact value `ViewUniform.world_position` is built from, so the shader's
     // reconstruction matches bitwise; only the upload copy moves.
-    let mut cams: HashMap<MainEntity, Vec3> = HashMap::default();
-    for view in &views {
-        cams.insert(
-            view.retained_view_entity.main_entity,
-            view.world_from_view.translation(),
-        );
-    }
+    let cams: Vec<(MainEntity, Vec3)> = views
+        .iter()
+        .map(|view| {
+            (
+                view.retained_view_entity.main_entity,
+                view.world_from_view.translation(),
+            )
+        })
+        .collect();
+    let cam_at = |cam: Entity| {
+        let key = MainEntity::from(cam);
+        cams.iter().rev().find(|(e, _)| *e == key).map(|(_, at)| at)
+    };
     for draw in &meta.draws {
         // Coplanar draws stay absolute: `DECAL_WORLD_CLIP` keys on the same `raster_bias != 0`.
         if draw.raster_bias != 0 {
@@ -502,7 +508,7 @@ fn prepare_effects(
         if draw.cam_relative {
             continue;
         }
-        let Some(cam) = cams.get(&MainEntity::from(draw.cam)) else {
+        let Some(cam) = cam_at(draw.cam) else {
             continue;
         };
         let offset = cam.to_array();
@@ -563,22 +569,7 @@ fn prepare_effects(
             };
             n_items += 1;
             let index_start = meta.indices.len() as u32;
-            match draw.topology {
-                EffectTopology::Quads => {
-                    let mut b = draw.range.start;
-                    while b < draw.range.end {
-                        for k in [b, b + 1, b + 2, b, b + 2, b + 3] {
-                            meta.indices.push(k);
-                        }
-                        b += 4;
-                    }
-                }
-                EffectTopology::Tris => {
-                    for k in draw.range.clone() {
-                        meta.indices.push(k);
-                    }
-                }
-            }
+            push_draw_indices(meta.indices.values_mut(), draw.topology, draw.range.clone());
             let index_end = meta.indices.len() as u32;
             if let (true, Some(lane)) = (trace, decal_lane(draw.bias)) {
                 trace_lines.push(format!(
@@ -642,6 +633,18 @@ fn prepare_effects(
     }
     if !meta.indices.is_empty() {
         meta.indices.write_buffer(&device, &queue);
+    }
+}
+
+fn push_draw_indices(indices: &mut Vec<u32>, topology: EffectTopology, range: Range<u32>) {
+    match topology {
+        EffectTopology::Quads => {
+            indices.reserve(range.len() / 4 * 6);
+            for b in range.step_by(4) {
+                indices.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+            }
+        }
+        EffectTopology::Tris => indices.extend(range),
     }
 }
 
@@ -808,6 +811,21 @@ fn effect_trace() -> bool {
 #[cfg(test)]
 mod tests {
     use bevy::math::{Mat3, Mat4, Vec3};
+
+    #[test]
+    fn draw_indices_open_each_quad_as_two_triangles_and_pass_tris_through() {
+        use super::{push_draw_indices, EffectTopology};
+        let mut indices = vec![7];
+        push_draw_indices(&mut indices, EffectTopology::Quads, 8..16);
+        push_draw_indices(&mut indices, EffectTopology::Tris, 16..22);
+        push_draw_indices(&mut indices, EffectTopology::Quads, 22..22);
+        assert_eq!(
+            indices,
+            [
+                7, 8, 9, 10, 8, 10, 11, 12, 13, 14, 12, 14, 15, 16, 17, 18, 19, 20, 21
+            ]
+        );
+    }
 
     /// One constant-bias unit at a `Depth32Float` depth: `2^(e−23)`, the step at its exponent.
     fn bias_unit(depth: f32) -> f32 {

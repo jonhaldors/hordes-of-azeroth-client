@@ -343,6 +343,45 @@ fn is_above(d: f32, r: f32) -> bool {
     d >= -r
 }
 
+struct LastMemo<K, V>(Option<(K, V)>);
+
+impl<K, V> Default for LastMemo<K, V> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+impl<K: PartialEq, V: Copy> LastMemo<K, V> {
+    fn get_or(&mut self, key: K, compute: impl FnOnce() -> V) -> V {
+        match &self.0 {
+            Some((k, v)) if *k == key => *v,
+            _ => {
+                let v = compute();
+                self.0 = Some((key, v));
+                v
+            }
+        }
+    }
+}
+
+fn starved(rate: f32, accumulator: f32, inherit_vel: Vec3) -> bool {
+    rate <= 0.0 && accumulator < 1.0 && inherit_vel == Vec3::ZERO
+}
+
+fn idle_step(
+    def: &benilla_formats::ParticleEmitterDef,
+    dt: f32,
+    accumulator: &mut f32,
+    gate_prev: &mut bool,
+    inherit_accum: &mut f32,
+    inherit_vel: &mut Vec3,
+) {
+    if def.inherits_emitter_motion() {
+        inherit_trigger(inherit_accum, inherit_vel, dt, Vec3::ZERO, false, def.inherit_scale);
+    }
+    accumulate_emission(def.burst(), 0.0, true, 0.0, dt, accumulator, gate_prev);
+}
+
 /// Does a booth-layered emitter freeze this frame (the camera's half of [`scene_frozen`])? A
 /// sleeping booth camera freezes it, as the reference ticks an emitter only inside a draw; a
 /// rate-throttled one ([`super::ViewThrottled`]) does not, its scene still running at full rate. A
@@ -455,6 +494,9 @@ pub(super) fn simulate_particles(
     let (farclip, exterior_gate, camera_instance) = gates.scene(Some((&*cam_tf, &*projection)));
     let dump_frame = dumps.depth_frame(time.elapsed_secs());
     let emit_dump = dumps.emit.due(time.elapsed_secs());
+    let mut alpha_memo = LastMemo::default();
+    let mut deck_memo = LastMemo::default();
+    let mut water_memo = LastMemo::default();
 
     for (
         entity,
@@ -610,7 +652,6 @@ pub(super) fn simulate_particles(
         // The water test's model frame, before `anchor` is shadowed: the instance root. A joint
         // owner only seeds the room walk, as a joint's transform is not the instance matrix.
         let water_model = (*anchor).or(*owner);
-        let water_gt = (*anchor).and_then(|e| owners.transforms.get(e).ok().copied());
         let water_bound = *water_bound;
         *age += dt;
         let (clock_seq, elapsed_s) = match *host {
@@ -634,9 +675,10 @@ pub(super) fn simulate_particles(
 
         // 0. Track a streamed owner's transform; once it is gone, free or drain per
         //    `on_owner_loss`.
+        let mut owner_gt = None;
         if let Some(o) = *owner {
             match owners.transforms.get(o) {
-                Ok(gt) => *placement = gt.compute_transform(),
+                Ok(gt) => owner_gt = Some(gt),
                 Err(_) => {
                     *owner = None;
                     match *on_owner_loss {
@@ -680,16 +722,29 @@ pub(super) fn simulate_particles(
         }
         // Dormant: nothing live, nothing draining, not emitting at this clock. Judged after the
         // owner-loss and drain blocks and the clock, which must run every frame.
-        if particles.is_empty()
-            && !*draining
-            && children.iter().all(|c| c.particles.is_empty())
-            && !def.timing.emitting(clock_seq, elapsed_s, gseq_now)
+        if particles.is_empty() && !*draining && children.iter().all(|c| c.particles.is_empty())
         {
-            continue;
+            if !def.timing.emitting(clock_seq, elapsed_s, gseq_now) {
+                continue;
+            }
+            if !emit_dump
+                && starved(
+                    def.timing.rate(clock_seq, elapsed_s, gseq_now),
+                    *accumulator,
+                    *inherit_vel,
+                )
+            {
+                idle_step(def, dt, accumulator, gate_prev, inherit_accum, inherit_vel);
+                continue;
+            }
         }
+        if let Some(gt) = owner_gt {
+            *placement = gt.compute_transform();
+        }
+        let water_gt = (*anchor).and_then(|e| owners.transforms.get(e).ok().copied());
         // The model's render alpha (`emitter+0x1a8 = Model+0x19c`, `0x718960` at `0x719073`): an
         // entity cloud's composed model alpha, or a placed doodad's distance fade.
-        *alpha = alpha_src.map_or(1.0, |e| owner_mul.alpha(e))
+        *alpha = alpha_src.map_or(1.0, |e| alpha_memo.get_or(e, || owner_mul.alpha(e)))
             * fade.as_ref().map_or(1.0, |f| f.distance_alpha(cam_pos));
         // The model's live translation, or the last known while the pool drains.
         match *anchor {
@@ -706,18 +761,18 @@ pub(super) fn simulate_particles(
 
         // 0a. The ride frame (`[CM2Model+0x17c]`): the transport the model stands on, inherited
         //     down the `ParentModel` chain; one that streamed out reads as none.
-        let deck = anchor
-            .or(*owner)
-            .and_then(|model| owners.rides.source(model))
-            .and_then(|t| {
-                owners
-                    .transforms
-                    .get(t)
-                    .ok()
-                    .map(|gt| (t, crate::ride_frame::ride_matrix(gt)))
+        // Model mode ignores the ride frame (`0x7b518e`, `0x7b3ef9`): it rides its host.
+        let deck = anchor.or(*owner).filter(|_| anchored).and_then(|model| {
+            deck_memo.get_or(model, || {
+                owners.rides.source(model).and_then(|t| {
+                    owners
+                        .transforms
+                        .get(t)
+                        .ok()
+                        .map(|gt| (t, crate::ride_frame::ride_matrix(gt)))
+                })
             })
-            // Model mode ignores the ride frame (`0x7b518e`, `0x7b3ef9`): it rides its host.
-            .filter(|_| anchored);
+        });
         // Boarding and leaving re-express every live particle (`0x7187f0` → `0x7b5e60`); a
         // moving deck folds nothing, the draw's live `A` carries it.
         if let Some(fold) = ride.retarget(deck) {
@@ -967,14 +1022,22 @@ pub(super) fn simulate_particles(
         let want_quads = def.geometry_model.is_none() && images.contains(&*texture);
         // One rung for every effect of a model, plus the water interleave: a cloud on the eye's
         // far side sorts under the water pass, classified once per model (`0x7084a0`).
-        let far = !is_booth
-            && model_far_side(
-                &interleave,
-                water_model,
-                water_gt.as_ref(),
-                water_bound,
-                placement.translation,
-            );
+        let commits = !particles.is_empty() || children.iter().any(|c| !c.particles.is_empty());
+        let far = commits
+            && !is_booth
+            && match water_gt.as_ref() {
+                Some(gt) => water_memo.get_or(
+                    (water_model, *gt, water_bound.0, water_bound.1.to_bits()),
+                    || model_far_side(&interleave, water_model, Some(gt), water_bound, Vec3::ZERO),
+                ),
+                None => model_far_side(
+                    &interleave,
+                    water_model,
+                    None,
+                    water_bound,
+                    placement.translation,
+                ),
+            };
         // Trace tag `fx`: which clouds sorted under the water pass this frame.
         if far && !particles.is_empty() && benilla_assets::trace::enabled() {
             benilla_assets::trace::line(
@@ -1573,5 +1636,72 @@ mod tests {
             &Transform::IDENTITY,
         );
         assert_eq!(child.particles.len(), n, "no parents, no births");
+    }
+
+    #[test]
+    fn a_starved_idle_step_leaves_the_state_a_full_rate_zero_frame_leaves() {
+        use super::{accumulate_emission, idle_step, starved};
+        for flags in [0, 0x40, 0x8000, 0x8040] {
+            let mut def = crate::particles::tests::plain_def();
+            def.flags = flags;
+            def.inherit_scale = 0.7;
+            for (rate, gate_prev, accumulator, inherit_accum) in [
+                (0.0, true, 0.0, 0.0),
+                (-3.0, true, 0.4, 0.03),
+                (0.0, false, 0.99, 0.02),
+                (-0.5, true, 0.5, 0.034),
+            ] {
+                let dt = 1.0 / 60.0;
+                assert!(starved(rate, accumulator, Vec3::ZERO));
+                let mut full = (accumulator, gate_prev, inherit_accum, Vec3::ZERO);
+                for delta in [Vec3::ZERO, Vec3::new(3.0, -1.0, 2.0)] {
+                    let mut f = full;
+                    if def.inherits_emitter_motion() {
+                        inherit_trigger(&mut f.2, &mut f.3, dt, delta, false, def.inherit_scale);
+                    }
+                    accumulate_emission(def.burst(), rate, true, 0.8, dt, &mut f.0, &mut f.1);
+                    let mut idle = full;
+                    idle_step(&def, dt, &mut idle.0, &mut idle.1, &mut idle.2, &mut idle.3);
+                    assert_eq!(
+                        (idle.0.to_bits(), idle.1, idle.2.to_bits(), idle.3),
+                        (f.0.to_bits(), f.1, f.2.to_bits(), f.3),
+                        "flags {flags:#x} rate {rate} delta {delta:?}"
+                    );
+                    full = f;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn starvation_needs_no_rate_no_owed_birth_and_no_held_inherit() {
+        use super::starved;
+        assert!(starved(0.0, 0.0, Vec3::ZERO));
+        assert!(!starved(0.1, 0.0, Vec3::ZERO), "a trickle can still owe a birth");
+        assert!(!starved(f32::NAN, 0.0, Vec3::ZERO));
+        assert!(!starved(0.0, 1.0, Vec3::ZERO), "a capped backlog births on its own");
+        assert!(
+            !starved(0.0, 0.0, Vec3::X),
+            "a held inherit velocity can be refolded by a deck change"
+        );
+    }
+
+    #[test]
+    fn last_memo_computes_once_per_run_of_equal_keys() {
+        use super::LastMemo;
+        let mut memo = LastMemo::default();
+        let mut calls = 0;
+        let mut get = |memo: &mut LastMemo<u32, u32>, k: u32| {
+            memo.get_or(k, || {
+                calls += 1;
+                k * 10
+            })
+        };
+        let seen: Vec<u32> = [1, 1, 1, 2, 2, 1]
+            .into_iter()
+            .map(|k| get(&mut memo, k))
+            .collect();
+        assert_eq!(seen, [10, 10, 10, 20, 20, 10]);
+        assert_eq!(calls, 3);
     }
 }
