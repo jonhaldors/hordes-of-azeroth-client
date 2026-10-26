@@ -426,7 +426,8 @@ impl Plugin for PlayerPlugin {
             Update,
             dash::freeze_world_while_held
                 .in_set(WorldStage::Input)
-                .after(control),
+                .after(control)
+                .after(wire_in::release_on_session_end),
         )
         // The shake adds its offset after `control` seats the camera, so its distance falloff
         // measures the unshaken eye.
