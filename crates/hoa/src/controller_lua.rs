@@ -12,7 +12,7 @@ type SimulateArgs = (
     Option<f64>,
     Option<f64>,
     Option<f64>,
-    Option<bool>,
+    Value,
 );
 
 pub fn register_controller_api(lua: &Lua, controller: &SharedController) -> LuaResult<()> {
@@ -84,7 +84,7 @@ pub fn register_controller_api(lua: &Lua, controller: &SharedController) -> LuaR
 
 fn simulate(lua: &Lua, controller: SharedController) -> LuaResult<Function> {
     lua.create_function(
-        move |_, (lx, ly, rx, ry, lt, rt, buttons, playstation): SimulateArgs| {
+        move |_, (lx, ly, rx, ry, lt, rt, buttons, style): SimulateArgs| {
             let mut c = controller.0.borrow_mut();
             if matches!(lx, Value::Nil) {
                 c.simulated = None;
@@ -105,10 +105,10 @@ fn simulate(lua: &Lua, controller: SharedController) -> LuaResult<Function> {
                 rt: number(rt).clamp(0.0, 1.0),
                 buttons: buttons.unwrap_or(0.0) as u32,
             };
-            let kind = if playstation.unwrap_or(false) {
-                PadKind::PlayStation
-            } else {
-                PadKind::Xbox
+            let kind = match style {
+                Value::Boolean(true) => PadKind::PlayStation,
+                Value::String(name) => PadKind::of_style(&name.to_string_lossy()),
+                _ => PadKind::Xbox,
             };
             c.simulated = Some((state, kind));
             Ok(())

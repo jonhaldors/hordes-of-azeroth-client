@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::LazyLock;
 
 use benilla_app::PadSteer;
 use bevy::input::gamepad::{Gamepad, GamepadAxis, GamepadButton};
@@ -38,6 +39,9 @@ const BUTTON_MAP: [(GamepadButton, u32); 15] = [
 ];
 
 const SONY_VENDOR: u16 = 0x054C;
+const VALVE_VENDOR: u16 = 0x28DE;
+const STEAM_DECK_PRODUCT: u16 = 0x1205;
+static ON_STEAM_DECK: LazyLock<bool> = LazyLock::new(|| std::env::var("SteamDeck").is_ok_and(|v| v == "1"));
 pub const TRIGGER_PRESSED: f32 = 0.45;
 const ACTIVITY: f32 = 0.35;
 pub const MOVE_DEADZONE: f32 = 0.24;
@@ -81,6 +85,7 @@ pub enum PadKind {
     None,
     Xbox,
     PlayStation,
+    SteamDeck,
 }
 
 impl PadKind {
@@ -89,14 +94,23 @@ impl PadKind {
             PadKind::None => None,
             PadKind::Xbox => Some("xbox"),
             PadKind::PlayStation => Some("ps"),
+            PadKind::SteamDeck => Some("deck"),
         }
     }
 
-    fn of_vendor(vendor: Option<u16>) -> Self {
-        if vendor == Some(SONY_VENDOR) {
-            PadKind::PlayStation
-        } else {
-            PadKind::Xbox
+    pub fn of_style(style: &str) -> Self {
+        match style {
+            "ps" => PadKind::PlayStation,
+            "deck" => PadKind::SteamDeck,
+            _ => PadKind::Xbox,
+        }
+    }
+
+    fn of_device(vendor: Option<u16>, product: Option<u16>, on_steam_deck: bool) -> Self {
+        match vendor {
+            Some(SONY_VENDOR) => PadKind::PlayStation,
+            Some(VALVE_VENDOR) if product == Some(STEAM_DECK_PRODUCT) || on_steam_deck => PadKind::SteamDeck,
+            _ => PadKind::Xbox,
         }
     }
 }
@@ -291,7 +305,7 @@ pub fn read_gamepad(pad: &Gamepad) -> (PadState, PadKind) {
         rt: button(GamepadButton::RightTrigger2),
         buttons,
     };
-    (state, PadKind::of_vendor(pad.vendor_id()))
+    (state, PadKind::of_device(pad.vendor_id(), pad.product_id(), *ON_STEAM_DECK))
 }
 
 pub fn radial_deadzone(x: f32, y: f32, deadzone: f32) -> Vec2 {
@@ -366,6 +380,18 @@ pub fn poll_pads(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_steam_deck_is_told_apart_from_other_valve_pads() {
+        let deck = PadKind::of_device(Some(VALVE_VENDOR), Some(STEAM_DECK_PRODUCT), false);
+        let virtual_pad_on_deck = PadKind::of_device(Some(VALVE_VENDOR), Some(0x11FF), true);
+        let virtual_pad_on_desktop = PadKind::of_device(Some(VALVE_VENDOR), Some(0x11FF), false);
+        assert_eq!(deck, PadKind::SteamDeck);
+        assert_eq!(virtual_pad_on_deck, PadKind::SteamDeck);
+        assert_eq!(virtual_pad_on_desktop, PadKind::Xbox);
+        assert_eq!(PadKind::of_device(Some(SONY_VENDOR), None, true), PadKind::PlayStation);
+        assert_eq!(PadKind::SteamDeck.name(), Some("deck"));
+    }
 
     #[test]
     fn edges_become_button_events_and_the_device_is_announced() {
