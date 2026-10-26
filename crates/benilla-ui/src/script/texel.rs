@@ -50,11 +50,6 @@ impl TexSlot {
     pub(crate) fn id(&self) -> Option<TexId> {
         self.id
     }
-
-    /// The path, out of a working copy.
-    pub(crate) fn into_path(self) -> Option<String> {
-        self.path
-    }
 }
 
 /// An entry of [`Texels`].

@@ -7,7 +7,7 @@
 //! unit no base does, so the VM resolves it to a guid and reads that guid's snapshot, which
 //! [`feed_chain_units`] pushes for the guids [`UiScript::chain_end_guids`] lists.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use bevy::prelude::*;
 
@@ -91,7 +91,21 @@ impl HeldUnits<'_> {
 
     /// [`Self::state`] under a name the caller looked up, which sends no name query.
     fn state_named(&self, store: &ObjectStore, guid: u64, name: Option<String>) -> UnitState {
-        let unit = RelUnit::of(guid, store).with_record(store, self.names);
+        self.state_of_unit(
+            store,
+            guid,
+            name,
+            RelUnit::of(guid, store).with_record(store, self.names),
+        )
+    }
+
+    fn state_of_unit(
+        &self,
+        store: &ObjectStore,
+        guid: u64,
+        name: Option<String>,
+        unit: RelUnit,
+    ) -> UnitState {
         let factions = self.rel.factions;
         let reaction = unit_reaction(&self.rel, &unit, self.me.as_ref());
         let mut s = snapshot(store, guid, name, reaction, self.unit_names, self.types);
@@ -282,11 +296,18 @@ pub(crate) struct CandidateMemo {
     /// What each pushed candidate was built from: the name it was pushed under, and whether its
     /// entry's creature record had answered. A creature's name is its record, but a pet's name
     /// and its record (the creature type the snapshot reads) come back apart.
-    pushed: HashMap<u64, (String, bool)>,
+    pushed: HashMap<u64, PushedCandidate>,
     /// The guild cache's generation the snapshots read, every one's guild leg.
     guild_generation: gate::Watch,
-    /// This frame's candidates, kept between frames so the walk allocates nothing.
-    seen: HashSet<u64>,
+    walk: u32,
+    moved_dists: Vec<(u64, f32)>,
+}
+
+struct PushedCandidate {
+    name: String,
+    record: bool,
+    dist2: f32,
+    walk: u32,
 }
 
 /// Push every unit `TargetByName` can pick, by guid: the VM's by-name walks rank them, and a
@@ -344,51 +365,59 @@ pub(crate) fn feed_name_candidates(
             },
             guild: &guild,
         };
-        memo.seen.clear();
+        memo.walk = memo.walk.wrapping_add(1);
+        let walk = memo.walk;
+        memo.moved_dists.clear();
         let origin = me.map(|(_, tf, _)| tf.translation());
         for (guid, tf, store) in origin.iter().flat_map(|_| &units) {
             let guid = guid.0;
             let Candidacy::Named(name) = NameSearch::AnyUnit.candidacy(&names, guid) else {
                 continue;
             };
-            memo.seen.insert(guid);
             let dist2 = origin.map_or(0.0, |o| tf.translation().distance_squared(o));
             let record = store
                 .as_ref()
                 .and_then(|s| s.0.object_entry())
                 .filter(|&e| e != 0)
                 .is_some_and(|e| names.creature_record(e).is_some());
-            let fresh = rebuild
-                || store.as_ref().is_some_and(|s| s.is_changed())
-                || memo
-                    .pushed
-                    .get(&guid)
-                    .is_none_or(|(n, r)| n != name || *r != record);
-            if !fresh {
-                script.set_name_candidate_dist2(guid, dist2);
-                continue;
+            let store_changed = store.as_ref().is_some_and(|s| s.is_changed());
+            if let Some(pushed) = memo.pushed.get_mut(&guid) {
+                pushed.walk = walk;
+                let fresh =
+                    rebuild || store_changed || pushed.name != name || pushed.record != record;
+                if !fresh {
+                    if pushed.dist2 != dist2 {
+                        pushed.dist2 = dist2;
+                        memo.moved_dists.push((guid, dist2));
+                    }
+                    continue;
+                }
             }
-            let state = match store.as_deref() {
+            let (state, unit) = match store.as_deref() {
                 // The name as the target feed reads it off the descriptor, from the cache alone.
                 Some(store) => {
                     let named = names
                         .resolve_unit(guid, Some(store), Ask::Read)
                         .map(str::to_string);
-                    held.state_named(store, guid, named)
+                    let unit = RelUnit::of(guid, store).with_record(store, &names);
+                    (
+                        held.state_of_unit(store, guid, named, unit),
+                        Some((unit, store)),
+                    )
                 }
-                None => UnitState {
-                    exists: true,
-                    has_object: true,
-                    is_connected: true,
-                    guid,
-                    name: Some(name.to_string()),
-                    is_player: benilla_protocol::guid::is_player(guid),
-                    ..Default::default()
-                },
+                None => (
+                    UnitState {
+                        exists: true,
+                        has_object: true,
+                        is_connected: true,
+                        guid,
+                        name: Some(name.to_string()),
+                        is_player: benilla_protocol::guid::is_player(guid),
+                        ..Default::default()
+                    },
+                    None,
+                ),
             };
-            let unit = store
-                .as_deref()
-                .map(|s| (RelUnit::of(guid, s).with_record(s, &names), s));
             script.set_name_candidate(
                 guid,
                 Some(NameCandidate {
@@ -402,11 +431,19 @@ pub(crate) fn feed_name_candidates(
                     ),
                 }),
             );
-            memo.pushed.insert(guid, (name.to_string(), record));
+            memo.pushed.insert(
+                guid,
+                PushedCandidate {
+                    name: name.to_string(),
+                    record,
+                    dist2,
+                    walk,
+                },
+            );
         }
-        let seen = &memo.seen;
-        memo.pushed.retain(|guid, _| {
-            let keep = seen.contains(guid);
+        script.set_name_candidate_dists(&memo.moved_dists);
+        memo.pushed.retain(|guid, pushed| {
+            let keep = pushed.walk == walk;
             if !keep {
                 script.set_name_candidate(*guid, None);
             }

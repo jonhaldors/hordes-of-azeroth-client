@@ -227,7 +227,14 @@ impl UiScript {
                     if data_ref.is_some_and(super::nameplate::is_unpainted_glow) {
                         continue;
                     }
-                    let mut data = data_ref.cloned().unwrap_or_default();
+                    let no_data;
+                    let data = match data_ref {
+                        Some(d) => d,
+                        None => {
+                            no_data = super::types::RegionData::default();
+                            &no_data
+                        }
+                    };
                     region_tex = data.tex.id();
                     // One hop (region combine `0x772180`): the region's alpha times its owner's
                     // byte, which `SetAlpha 0x76a690` already carries down the tree.
@@ -285,7 +292,7 @@ impl UiScript {
                         let font_height = data.font_height_script(model.layout_units());
                         let text_color = data.vertex_color_or_white();
                         QuadContent::Text {
-                            text: data.text,
+                            text: data.text.clone(),
                             // The slot's colour as `0x77f8c0` answers it: an empty one, or one
                             // set to white that stored nothing (`0x77f766`), draws white.
                             color: Some(text_color.to_f32()),
@@ -293,7 +300,7 @@ impl UiScript {
                             // CENTER/MIDDLE (`0x44d420`), where `GetJustifyH` says "UNKNOWN".
                             justify_h: data.justify.paint_h(),
                             justify_v: data.justify.paint_v(),
-                            font: data.font_path,
+                            font: data.font_path.clone(),
                             font_height,
                             text_height,
                             shadow: data.font_shadow.map(|s| s.drawn(model.layout_units())),
@@ -327,7 +334,7 @@ impl UiScript {
                         let has_texture = has_path || fill.is_some();
                         let wrap = data.tex.wrap();
                         QuadContent::Texture {
-                            path: std::mem::take(&mut data.tex).into_path(),
+                            path: data.tex.path().clone(),
                             color: has_texture
                                 .then(|| {
                                     let mut tint =
@@ -357,7 +364,7 @@ impl UiScript {
                             tex_coords: data.tex_coords,
                             wrap,
                             circular: data.circular,
-                            portrait_unit: data.portrait_unit,
+                            portrait_unit: data.portrait_unit.clone(),
                             rotation: data.rotation,
                             // Real art only: a solid here is a tint on a white texel, where the
                             // reference's is a texel block it would grey. No stock caller
@@ -422,7 +429,7 @@ impl UiScript {
             }
         }
         // Each layer batch's End sorts its quads by texture (`0x7731a0`).
-        layer_batch::sort_batches(&mut out, &batch_quads);
+        layer_batch::sort_batches(&mut out, &batch_quads, &mut model.batch_sorts.borrow_mut());
         out
     }
 }

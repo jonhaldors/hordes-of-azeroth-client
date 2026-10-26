@@ -42,6 +42,43 @@ impl RegionHandle {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct HandleHasher(u64);
+
+impl HandleHasher {
+    #[inline]
+    fn mix(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+impl std::hash::Hasher for HandleHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.mix(u64::from(b));
+        }
+    }
+    #[inline]
+    fn write_u32(&mut self, n: u32) {
+        self.mix(u64::from(n));
+    }
+    #[inline]
+    fn write_u64(&mut self, n: u64) {
+        self.mix(n);
+    }
+    #[inline]
+    fn write_usize(&mut self, n: usize) {
+        self.mix(n as u64);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+pub type HandleMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<HandleHasher>>;
+
 // ── The generational arena ───────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]

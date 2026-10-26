@@ -2,7 +2,7 @@
 //! the hit clip of a frame in it, which the pointer's probe applies. The two differ in the
 //! reference, and so here.
 
-use std::collections::HashMap;
+use crate::widget::HandleMap;
 
 use crate::layout::Rect;
 use crate::order::{DrawEntry, ZTarget};
@@ -33,9 +33,9 @@ pub(super) fn hit_rect(model: &Model, fh: FrameHandle, r: Rect) -> Rect {
 pub(super) struct DrawClips<'a> {
     model: &'a Model,
     /// Each frame's own scope, for the frames drawn under one; the rest are under none.
-    scope_of: HashMap<FrameHandle, FrameHandle>,
+    scope_of: HandleMap<FrameHandle, FrameHandle>,
     /// A ScrollFrame's callback clip, `None` when its callback draws nothing.
-    memo: HashMap<FrameHandle, Option<Rect>>,
+    memo: HandleMap<FrameHandle, Option<Rect>>,
 }
 
 impl<'a> DrawClips<'a> {
@@ -50,7 +50,7 @@ impl<'a> DrawClips<'a> {
         DrawClips {
             model,
             scope_of,
-            memo: HashMap::new(),
+            memo: HandleMap::default(),
         }
     }
 

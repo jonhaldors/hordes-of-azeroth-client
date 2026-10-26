@@ -278,10 +278,15 @@ impl super::super::UiScript {
         }
     }
 
-    /// Move a pushed candidate's distance, which changes every frame its snapshot does not.
-    pub fn set_name_candidate_dist2(&mut self, guid: u64, dist2: f32) {
-        if let Some(c) = self.model_mut().name_candidates.get_mut(&guid) {
-            c.dist2 = dist2;
+    pub fn set_name_candidate_dists(&mut self, dists: &[(u64, f32)]) {
+        if dists.is_empty() {
+            return;
+        }
+        let mut model = self.model_mut();
+        for &(guid, dist2) in dists {
+            if let Some(c) = model.name_candidates.get_mut(&guid) {
+                c.dist2 = dist2;
+            }
         }
     }
 
