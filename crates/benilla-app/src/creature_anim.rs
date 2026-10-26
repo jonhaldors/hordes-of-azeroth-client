@@ -1140,7 +1140,12 @@ impl Plugin for CreatureAnimPlugin {
             )
             .add_systems(
                 Update,
-                fx_anchor::play_anchor_fx.before(route_cast_visuals),
+                fx_anchor::play_anchor_fx
+                    .after(WorldStage::Net)
+                    .after(crate::ui_chat::ChatDrain)
+                    .after(WorldStage::Input)
+                    .after(crate::vm_pass::VmPass::End)
+                    .before(route_cast_visuals),
             )
             .add_systems(
                 Update,

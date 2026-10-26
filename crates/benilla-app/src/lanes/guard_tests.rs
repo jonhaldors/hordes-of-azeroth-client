@@ -673,6 +673,7 @@ const FILLED_THROUGH_A_READ: &[&str] = &[
 /// in system order, or a system that pushes onto a lane off it at its own place, passes every
 /// check here unseen.
 const READ_ONLY_TO_HANDLERS: &[&str] = &[
+    "::ui_chat::net::ChatTap",
     "::ui_chat::edit::ChannelState",
     // The console's registry, which a `ConsoleExec` a listener makes reads.
     "::console::ConsoleCommands",
