@@ -365,13 +365,18 @@ pub(super) fn mesh_holders(
 pub(super) struct ArchCensusAt(pub(super) f32);
 
 /// `WOW_ARCH_CENSUS`: the entity total, then the 60 largest archetypes' entity counts and
-/// component sets.
+/// component sets; `WOW_ARCH_CENSUS_EVERY=<secs>` repeats it.
 pub(super) fn arch_census(world: &mut World) {
     let due = world.resource::<ArchCensusAt>().0;
     if world.resource::<bevy::time::Time>().elapsed_secs() < due {
         return;
     }
-    world.resource_mut::<ArchCensusAt>().0 = f32::MAX;
+    let every = std::env::var("WOW_ARCH_CENSUS_EVERY")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .filter(|secs| *secs > 0.0);
+    let now = world.resource::<bevy::time::Time>().elapsed_secs();
+    world.resource_mut::<ArchCensusAt>().0 = every.map_or(f32::MAX, |secs| now + secs);
     let short = |full: &str| -> String {
         let base = full.split('<').next().unwrap_or(full);
         let segs: Vec<&str> = base.split("::").collect();
