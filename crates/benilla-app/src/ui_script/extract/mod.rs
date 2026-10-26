@@ -311,7 +311,10 @@ fn splice_simple(eq: &benilla_ui::script::ExtractedQuad) -> bool {
         | QuadContent::ColorValue { .. } => true,
         // Region text only: a message line's link spans replace the whole set, and a line losing
         // its link would leave a stale rect while the tripwire's scratch stays empty.
-        QuadContent::Text { .. } => matches!(eq.target, benilla_ui::order::ZTarget::Region(_)),
+        QuadContent::Text { text, .. } => {
+            matches!(eq.target, benilla_ui::order::ZTarget::Region(_))
+                || !text.as_deref().is_some_and(|t| t.contains("|H"))
+        }
         QuadContent::Texture {
             portrait_unit: None,
             ..
@@ -852,7 +855,7 @@ pub(super) fn paint_script(
             }
             let align = align_entries(&prev.extracted, &extracted);
             // A window opening moves many entries, which the full conversion serves.
-            const SPLICE_MAX: usize = 64;
+            const SPLICE_MAX: usize = 256;
             let changed: Vec<usize> = align
                 .source
                 .iter()
