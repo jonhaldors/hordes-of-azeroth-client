@@ -1336,10 +1336,10 @@ impl ButtonState {
 
     /// Whether the Highlight region draws: while hovered or locked. The reference gates it by its
     /// layer's enable (`0x76b6a0`/`0x76b6f0`), not by its shown bit, which it keeps from the
-    /// link (`0x779139`); every other region of a Button draws by its own bit alone.
-    pub fn highlight_draws(&self, rh: RegionHandle, hovered: bool) -> bool {
+    /// link (`0x779139`).
+    pub fn highlight_draws(&self, rh: RegionHandle, in_highlight_layer: bool, hovered: bool) -> bool {
         // No `enabled` term: `Disable()` turns the whole HIGHLIGHT layer off before this.
-        Some(rh) != self.highlight || hovered || self.locked_highlight
+        (Some(rh) != self.highlight && !in_highlight_layer) || hovered || self.locked_highlight
     }
 }
 

@@ -203,7 +203,10 @@ impl UiScript {
                         let hovered = owner.is_some() && model.mouseover == owner;
                         // The press is not read here: the state texture latches on the transition
                         // (`ButtonState::set_state`). Only the Highlight, unlatched, reads hover.
-                        if !bs.highlight_draws(rh, hovered) {
+                        let in_highlight_layer = region
+                            .is_some_and(|r| r.draw_layer == order::DrawLayer::Highlight)
+                            && !owner.is_some_and(|o| model.nameplates.is_plate(o));
+                        if !bs.highlight_draws(rh, in_highlight_layer, hovered) {
                             continue;
                         }
                         if bs.text == Some(rh) {

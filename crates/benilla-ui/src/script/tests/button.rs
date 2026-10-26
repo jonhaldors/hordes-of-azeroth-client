@@ -231,6 +231,38 @@ fn disabling_a_button_takes_its_whole_highlight_layer() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
+#[test]
+fn an_own_highlight_layer_texture_draws_only_while_hovered() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        local b = CreateFrame("Button", "HoverOnlyBtn")
+        b:SetPoint("BOTTOMLEFT", 0, 0); b:SetWidth(100); b:SetHeight(100)
+        local own = b:CreateTexture(nil, "HIGHLIGHT")
+        own:SetAllPoints(b)
+        own:SetTexture("Interface\\Own.blp")
+    "#,
+    )
+    .unwrap();
+    s.resolve();
+
+    let draws_own = |s: &UiScript| {
+        s.extract().iter().any(|q| {
+            s.quad_owner_name(q.target).as_deref() == Some("HoverOnlyBtn")
+                && matches!(&q.content, QuadContent::Texture { path: Some(p), .. } if p == "Interface\\Own.blp")
+        })
+    };
+
+    s.mouse_move(400.0, 300.0);
+    assert!(!draws_own(&s));
+    s.mouse_move(50.0, 50.0);
+    assert!(draws_own(&s));
+    s.run(r#"HoverOnlyBtn:LockHighlight()"#).unwrap();
+    s.mouse_move(400.0, 300.0);
+    assert!(draws_own(&s));
+}
+
 /// `CButton::OnMouseDown` shows the pushed texture when the button is registered for that mouse
 /// button, up or down (`0x77924b`: `[this+0x330] & (m | m << 8)`), whether or not a click fires.
 #[test]
