@@ -4,7 +4,7 @@ use benilla_app::{AnchorFx, ChatTap, FxAnchor, TappedLine};
 use benilla_formats::{load_creature_catalog, wow_data, Chain};
 use bevy::prelude::*;
 
-use crate::server_draw::{parse_line, DrawCommand, FlightSpec, KitSpec, DRAW_PREFIX};
+use crate::server_draw::{parse_line, DrawCommand, FlightSpec, KitSpec, MissileSpec, PropSpec, DRAW_PREFIX};
 use crate::telegraphs::Telegraphs;
 
 #[derive(Resource, Default)]
@@ -61,6 +61,11 @@ pub struct AuraAnchor {
     key: u32,
 }
 
+#[derive(Component)]
+pub struct PropAnchor {
+    key: u32,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn apply_draw_lines(
     mut commands: Commands,
@@ -70,6 +75,7 @@ pub fn apply_draw_lines(
     displays: Res<DisplayModels>,
     flights: Query<(Entity, &Flight)>,
     auras: Query<(Entity, &AuraAnchor)>,
+    props: Query<(Entity, &PropAnchor)>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs();
@@ -86,8 +92,20 @@ pub fn apply_draw_lines(
                 for (entity, _) in &auras {
                     commands.entity(entity).despawn();
                 }
+                for (entity, _) in &props {
+                    commands.entity(entity).despawn();
+                }
+            }
+            DrawCommand::Prop(prop) => place_prop(&mut commands, &mut fx, &displays, prop),
+            DrawCommand::RemoveProp(key) => {
+                for (entity, anchor) in &props {
+                    if anchor.key == key {
+                        commands.entity(entity).despawn();
+                    }
+                }
             }
             DrawCommand::Kit(kit) => play_kit(&mut commands, &mut fx, kit, now),
+            DrawCommand::Missile(missile) => launch_missile(&mut commands, &mut fx, missile, now),
             DrawCommand::Fly(flight) => fly(&mut commands, &mut fx, &displays, flight, now),
             DrawCommand::Land(id) => {
                 for (entity, flight) in &flights {
@@ -137,6 +155,44 @@ fn play_kit(commands: &mut Commands, fx: &mut MessageWriter<AnchorFx>, kit: KitS
     fx.write(AnchorFx::Kit {
         anchor,
         kit_id: kit.kit_id,
+    });
+}
+
+fn place_prop(commands: &mut Commands, fx: &mut MessageWriter<AnchorFx>, displays: &DisplayModels, prop: PropSpec) {
+    let Some((path, model_scale)) = displays.0.get(&prop.display_id).cloned() else {
+        warn!("Hordes of Azeroth: no model for prop display {}", prop.display_id);
+        return;
+    };
+    let transform = Transform::from_translation(prop.at)
+        .with_rotation(Quat::from_rotation_y(prop.yaw))
+        .with_scale(Vec3::splat(model_scale * prop.scale));
+    let anchor = commands
+        .spawn((
+            FxAnchor,
+            transform,
+            GlobalTransform::from(transform),
+            PropAnchor { key: prop.key },
+        ))
+        .id();
+    fx.write(AnchorFx::Model { anchor, path });
+}
+
+fn launch_missile(commands: &mut Commands, fx: &mut MessageWriter<AnchorFx>, missile: MissileSpec, now: f32) {
+    let transform = Transform::from_translation(missile.from);
+    let anchor = commands
+        .spawn((
+            FxAnchor,
+            transform,
+            GlobalTransform::from(transform),
+            KitAnchor {
+                until: now + missile.hold,
+            },
+        ))
+        .id();
+    fx.write(AnchorFx::Missile {
+        anchor,
+        spell_id: missile.spell_id,
+        to: missile.to,
     });
 }
 

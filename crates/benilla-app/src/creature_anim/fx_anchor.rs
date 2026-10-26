@@ -13,18 +13,23 @@ pub enum AnchorFx {
     Kit { anchor: Entity, kit_id: u32 },
     Model { anchor: Entity, path: String },
     Aura { anchor: Entity, spell_id: u32 },
+    Missile { anchor: Entity, spell_id: u32, to: Vec3 },
 }
 
 impl AnchorFx {
     fn anchor(&self) -> Entity {
         match self {
-            AnchorFx::Kit { anchor, .. } | AnchorFx::Model { anchor, .. } | AnchorFx::Aura { anchor, .. } => *anchor,
+            AnchorFx::Kit { anchor, .. }
+            | AnchorFx::Model { anchor, .. }
+            | AnchorFx::Aura { anchor, .. }
+            | AnchorFx::Missile { anchor, .. } => *anchor,
         }
     }
 }
 
 const ANCHOR_MODEL_EFFECT: u32 = u32::MAX;
 const FRAMES_TO_WAIT_FOR_ANCHOR: u8 = 3;
+const DEST_TARGET_MASK: u16 = 0x40;
 
 pub(crate) fn play_anchor_fx(
     mut requests: MessageReader<AnchorFx>,
@@ -33,6 +38,7 @@ pub(crate) fn play_anchor_fx(
     mut play_seq: ResMut<PlaySeq>,
     mut kits: MessageWriter<KitPush>,
     mut models: MessageWriter<SpellKitFx>,
+    mut gos: MessageWriter<super::SpellGoTargets>,
     visuals: Option<Res<SpellVisuals>>,
     spells: Option<Res<crate::ui_action::Spells>>,
 ) {
@@ -83,6 +89,19 @@ pub(crate) fn play_anchor_fx(
                         effects,
                     });
                 }
+            }
+            AnchorFx::Missile { spell_id, to, .. } => {
+                gos.write(super::SpellGoTargets {
+                    caster: Some(anchor),
+                    spell_id,
+                    hits: Vec::new(),
+                    misses: Vec::new(),
+                    source: None,
+                    dest: Some(to),
+                    target_mask: DEST_TARGET_MASK,
+                    ammo_display_id: None,
+                    seq: play_seq.next(),
+                });
             }
         }
     }

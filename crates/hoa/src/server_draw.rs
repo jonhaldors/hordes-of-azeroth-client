@@ -47,6 +47,23 @@ pub struct FlightSpec {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MissileSpec {
+    pub spell_id: u32,
+    pub from: Vec3,
+    pub to: Vec3,
+    pub hold: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PropSpec {
+    pub key: u32,
+    pub display_id: u32,
+    pub at: Vec3,
+    pub yaw: f32,
+    pub scale: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AuraSpec {
     pub key: u32,
     pub spell_id: u32,
@@ -63,6 +80,9 @@ pub enum DrawCommand {
     Kit(KitSpec),
     Fly(FlightSpec),
     Land(u32),
+    Missile(MissileSpec),
+    Prop(PropSpec),
+    RemoveProp(u32),
     Aura(AuraSpec),
     RemoveAura(u32),
 }
@@ -165,6 +185,20 @@ pub fn parse_line(line: &str) -> Option<DrawCommand> {
             scale: fields.f32()?,
         })),
         "land" => Some(DrawCommand::Land(fields.u32()?)),
+        "msl" => Some(DrawCommand::Missile(MissileSpec {
+            spell_id: fields.u32()?,
+            from: fields.point()?,
+            to: fields.point()?,
+            hold: fields.secs()?,
+        })),
+        "prop" => Some(DrawCommand::Prop(PropSpec {
+            key: fields.u32()?,
+            display_id: fields.u32()?,
+            at: fields.point()?,
+            yaw: fields.f32()?,
+            scale: fields.f32().unwrap_or(1.0),
+        })),
+        "propx" => Some(DrawCommand::RemoveProp(fields.u32()?)),
         "aura" => Some(DrawCommand::Aura(AuraSpec {
             key: fields.u32()?,
             spell_id: fields.u32()?,
@@ -241,6 +275,34 @@ mod tests {
                 scale: 1.25,
             }))
         );
+    }
+
+    #[test]
+    fn a_missile_reads_its_spell_both_points_and_hold() {
+        assert_eq!(
+            parse_line("HOA~msl~13241~1~2~3~4~5~6~1500"),
+            Some(DrawCommand::Missile(MissileSpec {
+                spell_id: 13241,
+                from: wow_to_bevy([1.0, 2.0, 3.0]),
+                to: wow_to_bevy([4.0, 5.0, 6.0]),
+                hold: 1.5,
+            }))
+        );
+    }
+
+    #[test]
+    fn a_prop_reads_its_key_display_and_place() {
+        assert_eq!(
+            parse_line("HOA~prop~9~17986~1~2~3~0.5~1.25"),
+            Some(DrawCommand::Prop(PropSpec {
+                key: 9,
+                display_id: 17986,
+                at: wow_to_bevy([1.0, 2.0, 3.0]),
+                yaw: 0.5,
+                scale: 1.25,
+            }))
+        );
+        assert_eq!(parse_line("HOA~propx~9"), Some(DrawCommand::RemoveProp(9)));
     }
 
     #[test]
