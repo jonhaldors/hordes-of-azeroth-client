@@ -179,68 +179,80 @@ struct Active {
 /// Pose every live rig where `animate_targets` runs, after `advance_animations`.
 fn evaluate_rig_poses(
     mut rigs: Query<(&AnimationPlayer, &ModelAnimations, &mut RigPose), Without<AnimParked>>,
+    mut fx_rigs: Query<(&AnimationPlayer, &mut super::FxRig)>,
 ) {
     // Parallel: a rig reads shared clips and writes only its own pose.
     rigs.par_iter_mut().for_each(|(player, anims, mut rig)| {
-        let src = &anims.pose;
-        // The contributing animations in node order, in one scratch per worker thread.
-        thread_local! {
-            static ACTIVE: std::cell::RefCell<Vec<Active>> =
-                const { std::cell::RefCell::new(Vec::new()) };
+        pose_from_player(player, &anims.pose, &mut rig);
+    });
+    fx_rigs.par_iter_mut().for_each(|(player, fx)| {
+        let fx = fx.into_inner();
+        if let Some(src) = fx.source.as_deref() {
+            pose_from_player(player, src, &mut &mut fx.pose);
         }
-        ACTIVE.with(|cell| {
-            let mut active = cell.borrow_mut();
-            active.clear();
-            for (&node, anim) in player.playing_animations() {
-                // Bevy's exact gate: a weight of literal 0.0 skips the node (paused does not).
-                if anim.weight() == 0.0 {
-                    continue;
-                }
-                let Some(pn) = src.node(node) else { continue };
-                if src.clips.get(pn.clip as usize).is_none() {
-                    continue;
-                }
-                active.push(Active {
-                    node: node.index(),
-                    clip: pn.clip as usize,
-                    mask: pn.mask,
-                    weight: anim.weight(),
-                    seek: anim.seek_time(),
-                    cursor: 0,
-                });
+    });
+}
+
+fn pose_from_player<R: std::ops::DerefMut<Target = RigPose>>(
+    player: &AnimationPlayer,
+    src: &PoseSource,
+    rig: &mut R,
+) {
+    // The contributing animations in node order, in one scratch per worker thread.
+    thread_local! {
+        static ACTIVE: std::cell::RefCell<Vec<Active>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    ACTIVE.with(|cell| {
+        let mut active = cell.borrow_mut();
+        active.clear();
+        for (&node, anim) in player.playing_animations() {
+            // Bevy's exact gate: a weight of literal 0.0 skips the node (paused does not).
+            if anim.weight() == 0.0 {
+                continue;
             }
-            active.sort_unstable_by_key(|a| a.node);
-            match active.as_mut_slice() {
-                [] => {}
-                [one] => {
-                    // One contribution commits at full value whatever its weight.
-                    rig.pose_dirty = true;
-                    for pb in &src.clips[one.clip].bones {
-                        if src.bone_masks.get(pb.bone as usize).copied().unwrap_or(0) & one.mask
-                            != 0
-                        {
-                            continue;
-                        }
-                        let Some(tf) = rig.locals.get_mut(pb.bone as usize) else {
-                            continue;
-                        };
-                        if let Some(v) = pb.translation.sample(one.seek) {
-                            tf.translation = v;
-                        }
-                        if let Some(v) = pb.rotation.sample(one.seek) {
-                            tf.rotation = v;
-                        }
-                        if let Some(v) = pb.scale.sample(one.seek) {
-                            tf.scale = v;
-                        }
+            let Some(pn) = src.node(node) else { continue };
+            if src.clips.get(pn.clip as usize).is_none() {
+                continue;
+            }
+            active.push(Active {
+                node: node.index(),
+                clip: pn.clip as usize,
+                mask: pn.mask,
+                weight: anim.weight(),
+                seek: anim.seek_time(),
+                cursor: 0,
+            });
+        }
+        active.sort_unstable_by_key(|a| a.node);
+        match active.as_mut_slice() {
+            [] => {}
+            [one] => {
+                // One contribution commits at full value whatever its weight.
+                rig.pose_dirty = true;
+                for pb in &src.clips[one.clip].bones {
+                    if src.bone_masks.get(pb.bone as usize).copied().unwrap_or(0) & one.mask != 0 {
+                        continue;
+                    }
+                    let Some(tf) = rig.locals.get_mut(pb.bone as usize) else {
+                        continue;
+                    };
+                    if let Some(v) = pb.translation.sample(one.seek) {
+                        tf.translation = v;
+                    }
+                    if let Some(v) = pb.rotation.sample(one.seek) {
+                        tf.rotation = v;
+                    }
+                    if let Some(v) = pb.scale.sample(one.seek) {
+                        tf.scale = v;
                     }
                 }
-                many => {
-                    rig.pose_dirty = true;
-                    blend_rig(src, many, &mut rig);
-                }
             }
-        });
+            many => {
+                rig.pose_dirty = true;
+                blend_rig(src, many, rig);
+            }
+        }
     });
 }
 

@@ -415,14 +415,17 @@ fn keyframe_curve<T: Animatable + Clone>(
     duration: f32,
     keys: Vec<(f32, T)>,
 ) -> Option<AnimatableKeyframeCurve<T>> {
+    let keys = curve_keys(duration, keys);
     match keys.len() {
         0 => None,
-        1 => AnimatableKeyframeCurve::new([
-            (0.0, keys[0].1.clone()),
-            (duration.max(1e-3), keys[0].1.clone()),
-        ])
-        .ok(),
         _ => AnimatableKeyframeCurve::new(keys).ok(),
+    }
+}
+
+fn curve_keys<T: Clone>(duration: f32, keys: Vec<(f32, T)>) -> Vec<(f32, T)> {
+    match keys.as_slice() {
+        [(_, v)] => vec![(0.0, v.clone()), (duration.max(1e-3), v.clone())],
+        _ => keys,
     }
 }
 
@@ -449,7 +452,7 @@ pub(crate) fn build_animation_clip(
             .iter()
             .map(|(t, v)| (*t, rest + wow_to_bevy(*v)))
             .collect();
-        let pose_trans = PoseTrack::new(&trans);
+        let pose_trans = PoseTrack::new(&curve_keys(anim.duration, trans.clone()));
         if let Some(c) = keyframe_curve(anim.duration, trans) {
             clip.add_curve_to_target(
                 target,
@@ -467,7 +470,7 @@ pub(crate) fn build_animation_clip(
                 )
             })
             .collect();
-        let pose_rot = PoseTrack::new(&rot);
+        let pose_rot = PoseTrack::new(&curve_keys(anim.duration, rot.clone()));
         if let Some(c) = keyframe_curve(anim.duration, rot) {
             clip.add_curve_to_target(
                 target,
@@ -480,7 +483,7 @@ pub(crate) fn build_animation_clip(
             .iter()
             .map(|(t, s)| (*t, Vec3::new(s[1], s[2], s[0])))
             .collect();
-        let pose_scale = PoseTrack::new(&scale);
+        let pose_scale = PoseTrack::new(&curve_keys(anim.duration, scale.clone()));
         if let Some(c) = keyframe_curve(anim.duration, scale) {
             clip.add_curve_to_target(
                 target,

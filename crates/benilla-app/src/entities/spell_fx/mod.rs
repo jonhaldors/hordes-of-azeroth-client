@@ -12,6 +12,8 @@
 //! for the client's completion callback.
 
 mod lifecycle;
+#[cfg(test)]
+mod rig_tests;
 
 use std::collections::HashMap;
 
@@ -195,18 +197,15 @@ pub(crate) fn attach_effect_visuals(
             }
         })
         .collect();
-    let (joints, armed) = arm_effect_rig(commands, root, dm, preferred_anim, stage);
-    let rig_slot = match (&dm.inverse_bindposes, joints.is_empty()) {
-        (Some(ibp), false) => {
-            benilla_world::rig_palette::RigSkin::allocate(palettes, joints.clone(), ibp.clone())
-                .map_or(0, |rig| {
-                    let slot = rig.slot;
-                    commands.entity(root).insert(rig);
-                    slot
-                })
-        }
-        _ => 0,
-    };
+    let (mut bones, armed) = arm_effect_rig(
+        commands,
+        root,
+        dm,
+        preferred_anim,
+        stage,
+        collapsed_effect_rigs(),
+    );
+    let rig_slot = bones.allocate_skin(commands, root, dm, palettes);
     let rigged = rig_slot != 0;
     // The opening clip's file sequence slot keys each batch's per-sequence alpha loops.
     let played = dm
@@ -270,8 +269,8 @@ pub(crate) fn attach_effect_visuals(
         let Some(info) = &part.billboard else {
             continue;
         };
-        let card = match joints.get(info.bone as usize) {
-            Some(&j) => benilla_world::billboard::BillboardCard::following_joint(info, j),
+        let card = match bones.owner(commands, info.bone) {
+            Some(j) => benilla_world::billboard::BillboardCard::following_joint(info, j),
             None => benilla_world::billboard::BillboardCard::following(info, root),
         };
         let mut spawned = commands.spawn((
@@ -309,8 +308,8 @@ pub(crate) fn attach_effect_visuals(
         let Some(quad) = part.ground_quad.filter(|_| is_ground_decal(part)) else {
             continue;
         };
-        let (joint, ibp) = match joints.get(quad.bone as usize) {
-            Some(&j) => (
+        let (joint, ibp) = match bones.owner(commands, quad.bone) {
+            Some(j) => (
                 j,
                 binds
                     .and_then(|b| b.get(quad.bone as usize))
@@ -350,9 +349,9 @@ pub(crate) fn attach_effect_visuals(
         }
     }
     for em in &dm.emitters {
-        let owner = joints
-            .get(em.def.bone as usize)
-            .map_or((root, [0.0; 3]), |&j| (j, em.bone_pivot));
+        let owner = bones
+            .owner(commands, em.def.bone)
+            .map_or((root, [0.0; 3]), |j| (j, em.bone_pivot));
         particles::spawn_emitter(
             commands,
             em,
@@ -376,9 +375,9 @@ pub(crate) fn attach_effect_visuals(
         );
     }
     for rb in &dm.ribbons {
-        let (owner, use_pivot) = joints
-            .get(rb.def.bone as usize)
-            .map_or((root, false), |&j| (j, true));
+        let (owner, use_pivot) = bones
+            .owner(commands, rb.def.bone)
+            .map_or((root, false), |j| (j, true));
         benilla_world::ribbons::spawn_ribbon(
             commands,
             rb,
@@ -394,6 +393,7 @@ pub(crate) fn attach_effect_visuals(
             None,
         );
     }
+    bones.finish(commands, root);
     true
 }
 
@@ -406,16 +406,29 @@ pub(super) fn arm_effect_rig(
     dm: &DisplayModel,
     preferred_anim: Option<u16>,
     stage: Option<FxStage>,
-) -> (Vec<Entity>, bool) {
+    collapse: bool,
+) -> (EffectBones, bool) {
     if dm.skeleton.joints.is_empty() {
-        return (Vec::new(), false);
+        return (EffectBones::Boneless, false);
     }
-    let joints = benilla_world::rig_palette::spawn_joints(commands, root, root, &dm.skeleton);
-    // Billboard bones face the camera at the palette level, their children inheriting.
-    if let Some(bb) = benilla_world::billboard::BillboardJointRig::new(&dm.skeleton, &joints, root)
+    let source = dm.animations.as_ref().map(|a| a.pose.clone());
+    let mut bones = match collapse
+        .then(|| benilla_world::rig_anim::FxRig::new(root, &dm.skeleton, source))
+        .flatten()
     {
-        commands.entity(root).insert(bb);
-    }
+        Some(rig) => EffectBones::Rig(rig),
+        None => {
+            let joints =
+                benilla_world::rig_palette::spawn_joints(commands, root, root, &dm.skeleton);
+            // Billboard bones face the camera at the palette level, their children inheriting.
+            if let Some(bb) =
+                benilla_world::billboard::BillboardJointRig::new(&dm.skeleton, &joints, root)
+            {
+                commands.entity(root).insert(bb);
+            }
+            EffectBones::Joints(joints)
+        }
+    };
     let mut armed = false;
     if let Some(anims) = dm.animations.as_ref() {
         // The caller's sequence (a thrown weapon's InFlight), else the bootstrap's `Stand`.
@@ -430,21 +443,103 @@ pub(super) fn arm_effect_rig(
             if stage.is_some() {
                 commands.entity(root).insert((life, anims.clone()));
             }
-            for (i, &j) in joints.iter().enumerate() {
-                commands
-                    .entity(j)
-                    .insert((bone_target_id(i as u16), AnimatedBy(root)));
-            }
+            bones.animate_by(commands, root);
             armed = true;
         }
-        if let Some(drive) =
-            benilla_world::rig_anim::GlobalSeqDrive::new(&anims.global_bones, &joints)
-        {
-            // Fresh per play: the reference makes a model per cast, so global sequences open at 0.
+        // Fresh per play: the reference makes a model per cast, so global sequences open at 0.
+        if let Some(drive) = bones.global_seq_drive(&anims.global_bones) {
             commands.entity(root).insert(drive);
         }
     }
-    (joints, armed)
+    (bones, armed)
+}
+
+fn collapsed_effect_rigs() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("WOW_FX_JOINTS").is_none())
+}
+
+pub(super) enum EffectBones {
+    Boneless,
+    Joints(Vec<Entity>),
+    Rig(benilla_world::rig_anim::FxRig),
+}
+
+impl EffectBones {
+    fn count(&self) -> usize {
+        match self {
+            Self::Boneless => 0,
+            Self::Joints(joints) => joints.len(),
+            Self::Rig(rig) => rig.bones(),
+        }
+    }
+
+    pub(super) fn owner(&mut self, commands: &mut Commands, bone: u16) -> Option<Entity> {
+        match self {
+            Self::Boneless => None,
+            Self::Joints(joints) => joints.get(bone as usize).copied(),
+            Self::Rig(rig) => rig.anchor_for(commands, bone),
+        }
+    }
+
+    fn animate_by(&self, commands: &mut Commands, root: Entity) {
+        let Self::Joints(joints) = self else {
+            return;
+        };
+        for (i, &j) in joints.iter().enumerate() {
+            commands
+                .entity(j)
+                .insert((bone_target_id(i as u16), AnimatedBy(root)));
+        }
+    }
+
+    fn global_seq_drive(
+        &self,
+        global_bones: &[benilla_assets::GlobalBone],
+    ) -> Option<benilla_world::rig_anim::GlobalSeqDrive> {
+        match self {
+            Self::Boneless => None,
+            Self::Joints(joints) => {
+                benilla_world::rig_anim::GlobalSeqDrive::new(global_bones, joints)
+            }
+            Self::Rig(rig) => {
+                benilla_world::rig_anim::GlobalSeqDrive::new_rig(global_bones, rig.bones())
+            }
+        }
+    }
+
+    pub(super) fn allocate_skin(
+        &self,
+        commands: &mut Commands,
+        root: Entity,
+        dm: &DisplayModel,
+        palettes: &mut benilla_world::rig_palette::RigPalettes,
+    ) -> u16 {
+        let Some(ibp) = dm.inverse_bindposes.as_ref().filter(|_| self.count() > 0) else {
+            return 0;
+        };
+        let skin = match self {
+            Self::Joints(joints) => {
+                benilla_world::rig_palette::RigSkin::allocate(palettes, joints.clone(), ibp.clone())
+            }
+            _ => benilla_world::rig_palette::RigSkin::allocate_bones(
+                palettes,
+                self.count() as u32,
+                ibp.clone(),
+            ),
+        };
+        skin.map_or(0, |rig| {
+            let slot = rig.slot;
+            commands.entity(root).insert(rig);
+            slot
+        })
+    }
+
+    pub(super) fn finish(self, commands: &mut Commands, root: Entity) {
+        if let Self::Rig(rig) = self {
+            commands.entity(root).insert(rig);
+        }
+    }
 }
 
 /// One live (or pending) effect-model instance on a unit.

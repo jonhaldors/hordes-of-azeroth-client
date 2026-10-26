@@ -77,6 +77,7 @@ fn apply_global_sequences(
     )>,
     mut joints: Query<&mut Transform>,
     mut rigs: Query<&mut super::RigPose>,
+    mut fx_rigs: Query<&mut super::FxRig>,
 ) {
     let now = time.elapsed_secs_f64();
     for (host, mut drive, parked, clock) in &mut drives {
@@ -87,6 +88,10 @@ fn apply_global_sequences(
             continue;
         }
         let mut rig = rigs.get_mut(host).ok();
+        let mut fx = match rig {
+            Some(_) => None,
+            None => fx_rigs.get_mut(host).ok(),
+        };
         for (target, bone) in &drive.bones {
             let tf: &mut Transform = match target {
                 SeqTarget::Joint(joint) => {
@@ -96,7 +101,11 @@ fn apply_global_sequences(
                     tf.into_inner()
                 }
                 SeqTarget::Bone(b) => {
-                    let Some(rig) = rig.as_mut() else { continue };
+                    let rig: &mut super::RigPose = match (rig.as_mut(), fx.as_mut()) {
+                        (Some(rig), _) => &mut **rig,
+                        (None, Some(fx)) => &mut fx.pose,
+                        (None, None) => continue,
+                    };
                     rig.pose_dirty = true;
                     let Some(tf) = rig.locals.get_mut(*b as usize) else {
                         continue;

@@ -296,14 +296,18 @@ pub fn billboard_joint_palette(
     parked: Query<Has<crate::rig_anim::AnimParked>>,
     mut joints: Query<(&Transform, &mut GlobalTransform), Without<WorldCamera>>,
     children: Query<&Children>,
+    fx_rigs: Query<&crate::rig_anim::FxRig>,
 ) {
     let Ok(cam_tf) = cam.single() else {
         return;
     };
     let (fwd, right, up) = (*cam_tf.forward(), *cam_tf.right(), *cam_tf.up());
     // Every rig root: the walk's do-not-enter set.
-    let rig_roots: bevy::platform::collections::HashSet<Entity> =
-        hosts.iter().map(|r| r.root).collect();
+    let rig_roots: bevy::platform::collections::HashSet<Entity> = hosts
+        .iter()
+        .map(|r| r.root)
+        .chain(fx_rigs.iter().filter_map(|r| r.walled_root()))
+        .collect();
     for rig in hosts
         .iter()
         .filter(|r| !parked.get(r.root).unwrap_or(false))

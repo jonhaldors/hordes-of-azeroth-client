@@ -145,6 +145,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("particles::spawn_emitter", "record"),
     ("ride_frame::RideFrame", "record"),
     ("rig_anim::AnimParked", "wall"),
+    ("rig_anim::FxRig", "wall"),
     ("rig_anim::GlobalSeqDrive", "wall"),
     ("rig_anim::PosePost", "wall"),
     ("rig_anim::RigAnchor", "wall"),
