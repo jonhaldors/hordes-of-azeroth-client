@@ -435,6 +435,8 @@ pub(crate) fn ground_derived(
 /// How far above the seat an idle unit's settle probe starts (yd): the swept-prism TOI
 /// (`0x632830`) still counts a face up to `1/36` yd (`[0x7ff9c8]`) behind the probe as a hit.
 const IDLE_UP_BAND: f32 = 1.0 / 36.0;
+const FAR_CLAMP_YARDS: f32 = 35.0;
+const FAR_CLAMP_EVERY_FRAMES: u32 = 4;
 /// How far below the seat the settle probe reaches (yd). The reference's settle reaches
 /// `d·1.849 + 1/36` and a body beyond it falls; an idle unit here has no fall, so a miss leaves it
 /// at its seat, which is also the airborne gate.
@@ -494,7 +496,11 @@ pub(in crate::net) fn ground_clamp_creatures(
         Has<crate::net::Embodied>,
         Has<crate::net::RemoteMotion>,
     )>,
+    camera: Query<&GlobalTransform, With<benilla_world::view::WorldCamera>>,
+    mut frame: Local<u32>,
 ) {
+    *frame = frame.wrapping_add(1);
+    let eye = camera.single().ok().map(GlobalTransform::translation);
     let cost = clamp_cost_enabled();
     let legacy = clamp_seat_disabled();
     let t0 = cost.then(std::time::Instant::now);
@@ -581,10 +587,22 @@ pub(in crate::net) fn ground_clamp_creatures(
         // A continuing walker takes the swept step from last frame's pose with Δz = 0 (step-up
         // `H` 2.0) and keeps only Y, so it rides a hill its chord cuts under; an idle unit or a new
         // path settles down from the seat (`0x636dcd`-`0x636e45`, `d·1.849 + 1/36`).
+        let far = eye.is_some_and(|eye| eye.distance_squared(t.translation) > FAR_CLAMP_YARDS * FAR_CLAMP_YARDS);
+        if far && (frame.wrapping_add(entity.index_u32()) % FAR_CLAMP_EVERY_FRAMES) != 0 {
+            if let Some(c) = clamped.as_deref_mut().filter(|c| c.hit) {
+                let y = seat_y + (c.y_written - c.seat_y);
+                t.translation.y = y;
+                c.seat_y = seat_y;
+                c.y_written = y;
+                c.xz = xz;
+                held += 1;
+                continue;
+            }
+        }
         let path = spline.map(|s| (s.id, s.start));
         let continuing = clamped
             .as_deref()
-            .filter(|c| path.is_some() && c.path == path)
+            .filter(|c| !far && path.is_some() && c.path == path)
             .map(|c| (c.xz, c.y_written));
         cast += 1;
         let (y, hit_ground) = if let Some((pxz, py)) = continuing {
