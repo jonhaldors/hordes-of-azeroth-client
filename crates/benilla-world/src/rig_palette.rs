@@ -124,6 +124,20 @@ impl Default for RigPalettes {
     }
 }
 
+pub(crate) fn rig_world_row_count(rig: &RigSkin, worlds: &[GlobalTransform], ibp: &[Mat4]) -> u32 {
+    (worlds.len().min(ibp.len()) as u32).min(rig.len)
+}
+
+pub(crate) fn fill_rig_world_rows(rows: &mut [[f32; 4]], worlds: &[GlobalTransform], ibp: &[Mat4]) {
+    for (b, out) in rows.chunks_exact_mut(3).enumerate() {
+        let m = worlds[b].affine() * Affine3A::from_mat4(ibp[b]);
+        let (m3, t) = (m.matrix3, m.translation);
+        out[0] = [m3.x_axis.x, m3.y_axis.x, m3.z_axis.x, t.x];
+        out[1] = [m3.x_axis.y, m3.y_axis.y, m3.z_axis.y, t.y];
+        out[2] = [m3.x_axis.z, m3.y_axis.z, m3.z_axis.z, t.z];
+    }
+}
+
 /// `WOW_RIG_COST=1`: per-frame `[rig-cost]` and `[rig-upload]` lines; one env read when off.
 pub fn rig_cost_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -340,7 +354,7 @@ impl RigPalettes {
         ibp: &[Mat4],
         origin: Vec3,
     ) {
-        let n = (worlds.len().min(ibp.len()) as u32).min(rig.len);
+        let n = rig_world_row_count(rig, worlds, ibp);
         let (slot, base) = (rig.slot, rig.base);
         self.cost_rows += n;
         self.set_origin(slot, origin);
@@ -352,14 +366,55 @@ impl RigPalettes {
             &mut self.cost_copies,
             &mut self.cost_copy_us,
         );
-        for b in 0..n as usize {
-            let m = worlds[b].affine() * Affine3A::from_mat4(ibp[b]);
-            let (m3, t) = (m.matrix3, m.translation);
-            let r = 3 * (base as usize + b);
-            rows[r] = [m3.x_axis.x, m3.y_axis.x, m3.z_axis.x, t.x];
-            rows[r + 1] = [m3.x_axis.y, m3.y_axis.y, m3.z_axis.y, t.y];
-            rows[r + 2] = [m3.x_axis.z, m3.y_axis.z, m3.z_axis.z, t.z];
+        let start = 3 * base as usize;
+        fill_rig_world_rows(&mut rows[start..start + 3 * n as usize], worlds, ibp);
+        if n > 0 {
+            let mirrored = self.mirrored.get(slot as usize).copied().unwrap_or(false);
+            self.dirty.push((base, n, mirrored));
         }
+    }
+
+    pub(crate) fn rig_row_ranges_mut<'a>(
+        &'a mut self,
+        skins: &[Option<&RigSkin>],
+    ) -> Vec<Option<&'a mut [[f32; 4]]>> {
+        let mut out: Vec<Option<&'a mut [[f32; 4]]>> = skins.iter().map(|_| None).collect();
+        if skins.iter().all(Option::is_none) {
+            return out;
+        }
+        let wm = self.bone_watermark();
+        let rows = rows_make_mut(
+            &mut self.rows,
+            &mut self.spare,
+            wm,
+            &mut self.cost_copies,
+            &mut self.cost_copy_us,
+        );
+        let mut order: Vec<(usize, usize, usize)> = skins
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.map(|s| (i, 3 * s.base as usize, 3 * s.len as usize)))
+            .collect();
+        order.sort_unstable_by_key(|&(_, start, _)| start);
+        let mut rest: &'a mut [[f32; 4]] = rows.as_mut_slice();
+        let mut cursor = 0usize;
+        for (i, start, len) in order {
+            if start < cursor || start + len > cursor + rest.len() {
+                continue;
+            }
+            let (_, tail) = std::mem::take(&mut rest).split_at_mut(start - cursor);
+            let (mine, tail) = tail.split_at_mut(len);
+            out[i] = Some(mine);
+            rest = tail;
+            cursor = start + len;
+        }
+        out
+    }
+
+    pub(crate) fn commit_rig_rows(&mut self, rig: &RigSkin, n: u32, origin: Vec3) {
+        let (slot, base) = (rig.slot, rig.base);
+        self.cost_rows += n;
+        self.set_origin(slot, origin);
         if n > 0 {
             let mirrored = self.mirrored.get(slot as usize).copied().unwrap_or(false);
             self.dirty.push((base, n, mirrored));
