@@ -285,8 +285,8 @@ fn spawn_slot(
             commands.entity(root).insert(crate::bowstring::Bowstring {
                 owner: entity,
                 // Bone and offset: the prop flexes, so the tips move.
-                top,
-                bottom,
+                top: crate::bowstring::StringTip::new(&dm.skeleton, top),
+                bottom: crate::bowstring::StringTip::new(&dm.skeleton, bottom),
             });
         }
     }
