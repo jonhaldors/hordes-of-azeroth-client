@@ -56,6 +56,7 @@ impl Plugin for HordesOfAzerothPlugin {
                         .chain(),
                 ),
             )
+            .add_systems(Last, crate::census::log_census.run_if(crate::census::census_wanted))
             .add_systems(
                 PostUpdate,
                 push_telegraphs.after(benilla_world::particles::buffer::begin_effect_frame),

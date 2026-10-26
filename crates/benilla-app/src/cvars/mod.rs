@@ -1458,6 +1458,7 @@ mod tests {
             names,
             vec![
                 "SoundReverb",
+                "UnitNameNPC",
                 "frillDensity",
                 "gxApi",
                 "gxColorBits",

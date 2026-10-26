@@ -182,13 +182,13 @@ fn plate_names(app: &mut App) -> Vec<String> {
 fn plates_are_judged_around_the_camera_unit() {
     let mut app = plates_app();
     let me = app.world().resource::<GuidIndex>().0[&ME];
-    let near_me = unit(&mut app, mob(0x31), Vec3::new(-8.0, 0.0, 0.0), &[]);
-    let eye = unit(&mut app, mob(0x32), Vec3::new(14.0, 0.0, 0.0), &[]);
-    let near_eye = unit(&mut app, mob(0x33), Vec3::new(24.0, 0.0, 0.0), &[]);
+    let near_me = unit(&mut app, mob(0x31), Vec3::new(-16.0, 0.0, 0.0), &[]);
+    let eye = unit(&mut app, mob(0x32), Vec3::new(28.0, 0.0, 0.0), &[]);
+    let near_eye = unit(&mut app, mob(0x33), Vec3::new(48.0, 0.0, 0.0), &[]);
     assert_eq!(
         plated(&mut app),
         HashSet::from([near_me, eye]),
-        "on our own body: the units within 20 yards of it, never itself"
+        "on our own body: the units within 40 yards of it, never itself"
     );
 
     let world = app.world_mut();
@@ -197,7 +197,7 @@ fn plates_are_judged_around_the_camera_unit() {
     assert_eq!(
         plated(&mut app),
         HashSet::from([me, near_eye]),
-        "on the eye: our body and the unit within 20 yards of the eye, never the eye"
+        "on the eye: our body and the unit within 40 yards of the eye, never the eye"
     );
 
     app.world_mut().entity_mut(eye).remove::<Embodied>();
@@ -309,9 +309,9 @@ fn far_sight_judges_plates_around_the_cameras_object() {
     use crate::player::RemoteView;
     let mut app = plates_app();
     let me = app.world().resource::<GuidIndex>().0[&ME];
-    let near_me = unit(&mut app, mob(0x31), Vec3::new(-8.0, 0.0, 0.0), &[]);
-    let eye = unit(&mut app, mob(0x32), Vec3::new(14.0, 0.0, 0.0), &[]);
-    let near_eye = unit(&mut app, mob(0x33), Vec3::new(24.0, 0.0, 0.0), &[]);
+    let near_me = unit(&mut app, mob(0x31), Vec3::new(-16.0, 0.0, 0.0), &[]);
+    let eye = unit(&mut app, mob(0x32), Vec3::new(28.0, 0.0, 0.0), &[]);
+    let near_eye = unit(&mut app, mob(0x33), Vec3::new(48.0, 0.0, 0.0), &[]);
     let view = |app: &mut App, entity: Option<Entity>| {
         app.world_mut()
             .resource_mut::<crate::player::ViewSubject>()
@@ -325,7 +325,7 @@ fn far_sight_judges_plates_around_the_cameras_object() {
     assert_eq!(
         plated(&mut app),
         HashSet::from([me, near_eye]),
-        "around the viewed unit: our body and the unit within 20 yards of it, never itself"
+        "around the viewed unit: our body and the unit within 40 yards of it, never itself"
     );
 
     let far_sight = app

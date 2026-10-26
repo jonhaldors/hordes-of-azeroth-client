@@ -61,11 +61,11 @@ impl PlateUnits {
         self.frames.values()
     }
 
-    pub fn leaving(&self, session: u64, live: &[(u64, Table)]) -> Vec<String> {
+    pub fn leaving(&self, session: u64, live: &[u64]) -> Vec<String> {
         if session != self.session {
             return Vec::new();
         }
-        let live_guids: HashSet<u64> = live.iter().map(|(guid, _)| *guid).collect();
+        let live_guids: HashSet<u64> = live.iter().copied().collect();
         self.slots
             .iter()
             .enumerate()
@@ -74,13 +74,13 @@ impl PlateUnits {
             .collect()
     }
 
-    pub fn sync(&mut self, session: u64, live: Vec<(u64, Table)>) -> PlateChanges {
+    pub fn sync(&mut self, session: u64, live: &[u64], mut frame_of: impl FnMut(u64) -> Option<Table>) -> PlateChanges {
         if session != self.session {
             self.session = session;
             self.slots.clear();
             self.frames.clear();
         }
-        let live_guids: HashSet<u64> = live.iter().map(|(guid, _)| *guid).collect();
+        let live_guids: HashSet<u64> = live.iter().copied().collect();
         let mut changes = PlateChanges::default();
         for (slot, held) in self.slots.iter_mut().enumerate() {
             if held.is_some_and(|guid| !live_guids.contains(&guid)) {
@@ -89,10 +89,14 @@ impl PlateUnits {
             }
         }
         self.frames.retain(|guid, _| live_guids.contains(guid));
-        for (guid, frame) in live {
-            if self.frames.insert(guid, frame).is_some() {
+        for &guid in live {
+            if self.frames.contains_key(&guid) {
                 continue;
             }
+            let Some(frame) = frame_of(guid) else {
+                continue;
+            };
+            self.frames.insert(guid, frame);
             let slot = match self.slots.iter().position(Option::is_none) {
                 Some(free) => free,
                 None => {
@@ -104,6 +108,10 @@ impl PlateUnits {
             changes.added.push(plate_token(slot));
         }
         changes
+    }
+
+    fn unchanged(&self, session: u64, live: &[u64]) -> bool {
+        session == self.session && live.len() == self.frames.len() && live.iter().all(|guid| self.frames.contains_key(guid))
     }
 }
 
@@ -119,12 +127,15 @@ pub fn track_nameplates(world: &mut World) {
             return;
         };
         let session = script.session();
-        let live = script.nameplate_frames();
+        let live = script.nameplate_guids();
+        if shared.0.borrow().unchanged(session, &live) {
+            return;
+        }
         let leaving = shared.0.borrow().leaving(session, &live);
         for token in leaving {
             script.fire_event(PLATE_REMOVED, vec![ScriptValue::Str(token)]);
         }
-        let changes = shared.0.borrow_mut().sync(session, live);
+        let changes = shared.0.borrow_mut().sync(session, &live, |guid| script.nameplate_frame(guid));
         for token in changes.added {
             script.fire_event(PLATE_ADDED, vec![ScriptValue::Str(token)]);
         }
@@ -150,19 +161,19 @@ mod tests {
         let lua = benilla_mlua::Lua::new();
         let frame = || lua.create_table().unwrap();
         let mut plates = PlateUnits::default();
-        let first = plates.sync(1, vec![(10, frame()), (20, frame())]);
+        let first = plates.sync(1, &[10, 20], |_| Some(frame()));
         assert_eq!(first.added.len(), 2);
         assert!(plates.guid_of("nameplate1").is_some());
         let gone = plates.token_of(10).unwrap();
-        let next = vec![(20, frame()), (30, frame())];
+        let next = [20, 30];
         assert_eq!(plates.leaving(1, &next), vec![gone.clone()]);
         assert_eq!(plates.guid_of(&gone), Some(10));
-        let second = plates.sync(1, next);
+        let second = plates.sync(1, &next, |_| Some(frame()));
         assert_eq!(second.removed, vec![gone.clone()]);
         assert_eq!(second.added, vec![gone.clone()]);
         assert_eq!(plates.guid_of(&gone), Some(30));
         assert_eq!(
-            plates.sync(1, vec![(20, frame()), (30, frame())]),
+            plates.sync(1, &[20, 30], |_| Some(frame())),
             PlateChanges::default()
         );
     }
@@ -171,8 +182,8 @@ mod tests {
     fn a_new_vm_starts_the_numbering_over() {
         let lua = benilla_mlua::Lua::new();
         let mut plates = PlateUnits::default();
-        plates.sync(1, vec![(10, lua.create_table().unwrap())]);
-        let after = plates.sync(2, vec![(20, lua.create_table().unwrap())]);
+        plates.sync(1, &[10], |_| lua.create_table().ok());
+        let after = plates.sync(2, &[20], |_| lua.create_table().ok());
         assert!(after.removed.is_empty());
         assert_eq!(after.added, vec!["nameplate1".to_string()]);
         assert_eq!(plates.guid_of("nameplate1"), Some(20));

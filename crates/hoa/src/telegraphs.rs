@@ -104,6 +104,10 @@ impl Telegraphs {
         self.live.remove(key);
     }
 
+    pub fn len(&self) -> usize {
+        self.live.len()
+    }
+
     pub fn clear_all(&mut self) {
         self.live.clear();
     }

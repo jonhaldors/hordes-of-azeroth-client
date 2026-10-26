@@ -16,10 +16,15 @@ pub fn seed_every_vm(app: &mut App, seed: impl Fn(&UiScript) + 'static) {
         .push(Box::new(seed));
 }
 
+struct HostedState(bevy::ecs::system::SystemState<crate::script_calls::HostedVm<'static, 'static>>);
+
 pub fn run_hosted<R>(world: &mut World, f: impl FnOnce(Option<&mut UiScript>) -> R) -> R {
-    let mut state = bevy::ecs::system::SystemState::<crate::script_calls::HostedVm>::new(world);
-    let result = state.get_mut(world).run(f);
-    state.apply(world);
+    let mut state = world
+        .remove_non_send_resource::<HostedState>()
+        .unwrap_or_else(|| HostedState(bevy::ecs::system::SystemState::new(world)));
+    let result = state.0.get_mut(world).run(f);
+    state.0.apply(world);
+    world.insert_non_send_resource(state);
     result
 }
 

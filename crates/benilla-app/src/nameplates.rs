@@ -875,8 +875,8 @@ mod tests {
             "a selectable target shows with NPC names off"
         );
         assert!(
-            !should_show_name(&npc(true, false), &NameConfig::default()),
-            "NPC names default off"
+            should_show_name(&npc(true, false), &NameConfig::default()),
+            "NPC names default on"
         );
     }
 

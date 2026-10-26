@@ -1,3 +1,4 @@
+mod census;
 mod controller_lua;
 mod cursor;
 mod interact;
