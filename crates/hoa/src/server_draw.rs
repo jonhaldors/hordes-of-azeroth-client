@@ -25,6 +25,7 @@ pub struct MarkSpec {
     pub style: u8,
     pub follow: u64,
     pub texture: Option<String>,
+    pub done: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -117,6 +118,7 @@ fn mark(key: String, fields: &mut Fields, persistent_allowed: bool) -> Option<Dr
     let style = fields.u32().unwrap_or(0) as u8;
     let follow = fields.u64().unwrap_or(0);
     let texture = fields.next_str().filter(|t| !t.is_empty()).map(str::to_string);
+    let done = fields.secs().unwrap_or(0.0);
     Some(DrawCommand::Mark(MarkSpec {
         key,
         shape,
@@ -129,6 +131,7 @@ fn mark(key: String, fields: &mut Fields, persistent_allowed: bool) -> Option<Dr
         style,
         follow,
         texture,
+        done,
     }))
 }
 
@@ -213,7 +216,16 @@ mod tests {
         assert!(spec.additive);
         assert_eq!(spec.follow, 4_294_967_297);
         assert_eq!(spec.texture.as_deref(), Some("World\\Goober\\RuneGroundBlue01.blp"));
+        assert_eq!(spec.done, 0.0);
         assert_eq!(parse_line("HOA~markx~ley3"), Some(DrawCommand::RemoveMark("mley3".into())));
+    }
+
+    #[test]
+    fn a_resumed_mark_carries_the_time_already_filled() {
+        let spec = marked("HOA~mark~hearth~0~1~2~3~0~5~15000~0~3~0~~4500");
+        assert_eq!(spec.duration, Some(15.0));
+        assert_eq!(spec.texture, None);
+        assert_eq!(spec.done, 4.5);
     }
 
     #[test]

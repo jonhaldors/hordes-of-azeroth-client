@@ -92,8 +92,8 @@ impl Telegraphs {
         self.live.insert(
             spec.key.clone(),
             Mark {
+                started: now - spec.done,
                 spec,
-                started: now,
                 surfaces: 0,
                 verts: Vec::new(),
             },
