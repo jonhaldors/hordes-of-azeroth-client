@@ -295,6 +295,13 @@ pub(in crate::net) fn trace_move_snap(
     );
 }
 
+const WALK_TURN_RATE: f32 = 12.0;
+
+fn smooth_walk_yaw(current: f32, goal: f32, dt: f32) -> f32 {
+    let delta = crate::creature_anim::wrap_pi(goal - current);
+    current + delta * (1.0 - (-WALK_TURN_RATE * dt).exp())
+}
+
 /// `WOW_CREATE_SPLINE=off` drops every create-block spline, freezing a unit at first sight until
 /// its next `SMSG_MONSTER_MOVE`: an A/B lever for [`create_spline`].
 fn create_spline_enabled() -> bool {
@@ -318,6 +325,7 @@ pub(in crate::net) fn sample_splines(
         Option<&super::super::Guid>,
         // A deck path's destination; `transport::compose_riders` carries it to the world later.
         Option<&mut crate::transport::TransportRider>,
+        Has<crate::net::SelfPlayer>,
     )>,
     mut trace_next: Local<f32>,
     time: Res<Time>,
@@ -329,7 +337,7 @@ pub(in crate::net) fn sample_splines(
     if tick {
         *trace_next = time.elapsed_secs() + SPL_TRACE_SECS;
     }
-    for (entity, spline, mut t, swimming, guid, rider) in &mut q {
+    for (entity, spline, mut t, swimming, guid, rider, is_self) in &mut q {
         let (wow_pos, facing, pitch) = spline.sample(now);
         // A deck path's sample is the rider's transport-local pose, composed later this frame.
         if let Some(deck) = spline.deck {
@@ -364,8 +372,14 @@ pub(in crate::net) fn sample_splines(
                 Quat::from_rotation_y(f)
                     * Quat::from_rotation_x(pitch)
                     * Quat::from_rotation_z(bank)
-            } else {
+            } else if is_self {
                 Quat::from_rotation_y(f)
+            } else {
+                Quat::from_rotation_y(smooth_walk_yaw(
+                    t.rotation.to_euler(EulerRot::YXZ).0,
+                    f,
+                    time.delta_secs(),
+                ))
             };
         }
         if let Some(was) = was {
