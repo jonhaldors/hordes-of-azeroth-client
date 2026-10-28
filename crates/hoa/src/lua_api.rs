@@ -64,6 +64,7 @@ fn register_classic_api(
     let globals = lua.globals();
     globals.set("UnitPosition", unit_position(lua, snapshot.clone())?)?;
     globals.set("GetPlayerFacing", player_facing(lua, snapshot.clone())?)?;
+    globals.set("GetCameraFacing", camera_facing(lua, snapshot.clone())?)?;
     globals.set(
         "ClosestUnitPosition",
         closest_unit_position(lua, snapshot.clone())?,
@@ -106,6 +107,13 @@ fn unit_position(lua: &Lua, snapshot: SharedSnapshot) -> LuaResult<benilla_mlua:
 fn player_facing(lua: &Lua, snapshot: SharedSnapshot) -> LuaResult<benilla_mlua::Function> {
     lua.create_function(move |lua, ()| match snapshot.0.borrow().player {
         Some(player) => lua.pack_multi(f64::from(player.facing)),
+        None => Ok(MultiValue::new()),
+    })
+}
+
+fn camera_facing(lua: &Lua, snapshot: SharedSnapshot) -> LuaResult<benilla_mlua::Function> {
+    lua.create_function(move |lua, ()| match snapshot.0.borrow().camera_facing {
+        Some(facing) => lua.pack_multi(f64::from(facing)),
         None => Ok(MultiValue::new()),
     })
 }

@@ -6,6 +6,7 @@ use std::rc::Rc;
 use benilla_app::Objects;
 use benilla_assets::coords::bevy_to_wow;
 use benilla_protocol::guid;
+use benilla_world::view::WorldCamera;
 use benilla_world::world_map::CurrentMap;
 use bevy::prelude::*;
 
@@ -53,6 +54,7 @@ pub struct AuraEntry {
 #[derive(Default, Debug)]
 pub struct Snapshot {
     pub player: Option<PlayerView>,
+    pub camera_facing: Option<f32>,
     pub map_id: u32,
     pub creatures: Vec<CreatureView>,
     pub player_guid: u64,
@@ -76,6 +78,11 @@ pub struct SharedSnapshot(pub Rc<RefCell<Snapshot>>);
 
 pub fn facing_from_rotation(rotation: Quat) -> f32 {
     rotation.to_euler(EulerRot::YXZ).0.rem_euclid(TAU)
+}
+
+pub fn facing_from_look(forward: Vec3) -> Option<f32> {
+    let [north, west, _] = bevy_to_wow(forward);
+    (north * north + west * west > 1e-6).then(|| west.atan2(north).rem_euclid(TAU))
 }
 
 fn creature_entry(unit_guid: u64) -> Option<u32> {
@@ -103,11 +110,16 @@ pub fn guid_text(guid: u64) -> String {
 pub fn capture_snapshot(
     objects: Objects,
     bodies: Query<&GlobalTransform>,
+    cameras: Query<&GlobalTransform, With<WorldCamera>>,
     map: Option<Res<CurrentMap>>,
     shared: NonSend<SharedSnapshot>,
 ) {
     let mut snapshot = shared.0.borrow_mut();
     snapshot.map_id = map.map_or(0, |map| map.0);
+    snapshot.camera_facing = cameras
+        .iter()
+        .next()
+        .and_then(|camera| facing_from_look(*camera.forward()));
     snapshot.player = objects
         .player()
         .and_then(|me| bodies.get(me).ok())
@@ -170,6 +182,15 @@ mod tests {
     fn facing_is_the_yaw_kept_in_one_turn() {
         let facing = facing_from_rotation(Quat::from_rotation_y(-1.0));
         assert!((facing - (TAU - 1.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn camera_facing_is_the_wow_bearing_of_its_look() {
+        let north = facing_from_look(Vec3::new(0.0, -0.5, -1.0)).unwrap();
+        let west = facing_from_look(Vec3::new(-1.0, 0.3, 0.0)).unwrap();
+        assert!(north.abs() < 1e-5);
+        assert!((west - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        assert_eq!(facing_from_look(Vec3::NEG_Y), None);
     }
 
     #[test]
