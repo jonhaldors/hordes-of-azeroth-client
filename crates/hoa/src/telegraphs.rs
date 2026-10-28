@@ -63,8 +63,8 @@ const PALETTES: [Palette; 5] = [
 
 const GROUND_PALETTES: [Palette; 5] = [
     Palette {
-        rim: [1.0, 0.50, 0.10],
-        wash: [0.40, 0.12, 0.0],
+        rim: [1.0, 0.72, 0.18],
+        wash: [0.75, 0.36, 0.03],
     },
     Palette {
         rim: [0.70, 0.50, 1.0],
