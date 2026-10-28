@@ -2,10 +2,19 @@ use std::collections::HashMap;
 
 use benilla_app::{AnchorFx, ChatTap, FxAnchor, TappedLine};
 use benilla_formats::{load_creature_catalog, wow_data, Chain};
+use benilla_world::decal::WorldDecal;
 use bevy::prelude::*;
 
 use crate::server_draw::{parse_line, DrawCommand, FlightSpec, KitSpec, MissileSpec, PropSpec, DRAW_PREFIX};
 use crate::telegraphs::Telegraphs;
+
+const GROUND_SNAP_YARDS: f32 = 2.0;
+
+fn on_ground_near(decals: &WorldDecal, at: Vec3) -> Vec3 {
+    decals
+        .surface_height_near(at, GROUND_SNAP_YARDS)
+        .map_or(at, |ground| at.with_y(ground))
+}
 
 #[derive(Resource, Default)]
 pub struct DisplayModels(HashMap<u32, (String, f32)>);
@@ -76,6 +85,7 @@ pub fn apply_draw_lines(
     flights: Query<(Entity, &Flight)>,
     auras: Query<(Entity, &AuraAnchor)>,
     props: Query<(Entity, &PropAnchor)>,
+    decals: WorldDecal,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs();
@@ -96,7 +106,13 @@ pub fn apply_draw_lines(
                     commands.entity(entity).despawn();
                 }
             }
-            DrawCommand::Prop(prop) => place_prop(&mut commands, &mut fx, &displays, prop),
+            DrawCommand::Prop(prop) => {
+                let prop = PropSpec {
+                    at: on_ground_near(&decals, prop.at),
+                    ..prop
+                };
+                place_prop(&mut commands, &mut fx, &displays, prop)
+            }
             DrawCommand::RemoveProp(key) => {
                 for (entity, anchor) in &props {
                     if anchor.key == key {
@@ -104,7 +120,10 @@ pub fn apply_draw_lines(
                     }
                 }
             }
-            DrawCommand::Kit(kit) => play_kit(&mut commands, &mut fx, kit, now),
+            DrawCommand::Kit(kit) => {
+                let at = if kit.raised { kit.at } else { on_ground_near(&decals, kit.at) };
+                play_kit(&mut commands, &mut fx, KitSpec { at, ..kit }, now)
+            }
             DrawCommand::Missile(missile) => launch_missile(&mut commands, &mut fx, missile, now),
             DrawCommand::Fly(flight) => fly(&mut commands, &mut fx, &displays, flight, now),
             DrawCommand::Land(id) => {
@@ -115,7 +134,8 @@ pub fn apply_draw_lines(
                 }
             }
             DrawCommand::Aura(aura) => {
-                let transform = Transform::from_translation(aura.at).with_scale(Vec3::splat(aura.scale));
+                let at = on_ground_near(&decals, aura.at);
+                let transform = Transform::from_translation(at).with_scale(Vec3::splat(aura.scale));
                 let anchor = commands
                     .spawn((
                         FxAnchor,

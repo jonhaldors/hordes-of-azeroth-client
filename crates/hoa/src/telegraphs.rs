@@ -12,12 +12,19 @@ use benilla_world::view::WorldCamera;
 
 use crate::server_draw::{MarkSpec, Shape, TELEGRAPH_KEY_PREFIX};
 
-const LINE_PIECE_YARDS: f32 = 3.0;
 const LINE_HALF_WIDTH: f32 = 1.5;
-const MAX_LINE_PIECES: u32 = 12;
+const SHORTEST_LINE_YARDS: f32 = 1.0;
+const LONGEST_LINE_YARDS: f32 = 36.0;
 const CONE_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
 const RIM_YARDS: f32 = 0.3;
-const SLAB_YARDS: f32 = 4.0;
+const SMALLEST_REACH_YARDS: f32 = 4.0;
+const REACH_PER_YARD_OF_SIZE: f32 = 0.6;
+const FADING_SHARE_OF_REACH: f32 = 0.75;
+const LINE_REACH_OFF_PROFILE_YARDS: f32 = 2.0;
+const PROFILE_STEP_YARDS: f32 = 1.0;
+const PROFILE_SEARCH_YARDS: f32 = 4.0;
+const WALL_UPRIGHTNESS: f32 = 0.5;
+const STEP_RISE_YARDS: f32 = 1.0;
 const PIXELS_PER_YARD: f32 = 12.0;
 const MIN_TEXTURE_PIXELS: u32 = 64;
 const MAX_TEXTURE_PIXELS: u32 = 512;
@@ -118,8 +125,7 @@ impl Telegraphs {
 }
 
 fn line_length(size: f32) -> f32 {
-    let pieces = (size / LINE_PIECE_YARDS).round().clamp(1.0, MAX_LINE_PIECES as f32);
-    pieces * LINE_PIECE_YARDS
+    size.clamp(SHORTEST_LINE_YARDS, LONGEST_LINE_YARDS)
 }
 
 fn drawn_size(spec: &MarkSpec) -> f32 {
@@ -136,7 +142,15 @@ fn extents(shape: Shape, size: f32) -> (f32, f32, f32, f32) {
     }
 }
 
-fn frame_for(spec: &MarkSpec) -> DecalFrame {
+fn reach_for(size: f32) -> f32 {
+    (size * REACH_PER_YARD_OF_SIZE).max(SMALLEST_REACH_YARDS)
+}
+
+fn reach_fade(height_off: f32, reach: f32) -> f32 {
+    ((reach - height_off.abs()) / (FADING_SHARE_OF_REACH * reach)).clamp(0.0, 1.0)
+}
+
+fn frame_for(spec: &MarkSpec, below: f32, above: f32) -> DecalFrame {
     let (min_x, max_x, min_z, max_z) = extents(spec.shape, drawn_size(spec));
     let (sin, cos) = spec.yaw.sin_cos();
     DecalFrame {
@@ -147,9 +161,48 @@ fn frame_for(spec: &MarkSpec) -> DecalFrame {
         max_x,
         min_z,
         max_z,
-        min_y: -SLAB_YARDS,
-        max_y: SLAB_YARDS,
+        min_y: below,
+        max_y: above,
     }
+}
+
+fn is_wall([a, b, c]: [Vec3; 3]) -> bool {
+    let normal = (b - a).cross(c - a);
+    let area = normal.length();
+    if area <= f32::EPSILON {
+        return false;
+    }
+    let rise = a.y.max(b.y).max(c.y) - a.y.min(b.y).min(c.y);
+    normal.y.abs() / area < WALL_UPRIGHTNESS && rise > STEP_RISE_YARDS
+}
+
+fn point_along_line(spec: &MarkSpec, distance: f32) -> Vec3 {
+    let (sin, cos) = spec.yaw.sin_cos();
+    spec.at + Vec3::new(-distance * sin, 0.0, -distance * cos)
+}
+
+fn line_profile(spec: &MarkSpec, surface_height_near: impl Fn(Vec3, f32) -> Option<f32>) -> Vec<f32> {
+    let length = drawn_size(spec);
+    let steps = (length / PROFILE_STEP_YARDS).ceil().max(1.0) as usize;
+    let mut height = spec.at.y;
+    let mut profile = Vec::with_capacity(steps + 1);
+    profile.push(0.0);
+    for step in 1..=steps {
+        let distance = (step as f32 * PROFILE_STEP_YARDS).min(length);
+        let probe = point_along_line(spec, distance).with_y(height);
+        height = surface_height_near(probe, PROFILE_SEARCH_YARDS).unwrap_or(height);
+        profile.push(height - spec.at.y);
+    }
+    profile
+}
+
+fn profile_height_at(profile: &[f32], distance: f32) -> f32 {
+    let last = profile.len() - 1;
+    let along = (distance / PROFILE_STEP_YARDS).clamp(0.0, last as f32);
+    let before = (along.floor() as usize).min(last);
+    let after = (before + 1).min(last);
+    let blend = along - before as f32;
+    profile[before] + (profile[after] - profile[before]) * blend
 }
 
 fn fill_uv(shape: Shape, uv: [f32; 2], progress: f32) -> [f32; 2] {
@@ -296,13 +349,31 @@ pub fn project_telegraphs(mut telegraphs: ResMut<Telegraphs>, decals: WorldDecal
         }
         mark.surfaces = surfaces;
         mark.verts.clear();
-        let frame = frame_for(&mark.spec);
-        decals.project(
-            &mut mark.verts,
-            &frame,
-            |p| ((SLAB_YARDS - p.y.abs()) / SLAB_YARDS).clamp(0.0, 1.0),
-            |x, z| frame.rect_uv(x, z),
-        );
+        let keep_floor = |triangle: [Vec3; 3]| !is_wall(triangle);
+        if mark.spec.shape == Shape::Line {
+            let profile = line_profile(&mark.spec, |at, reach| decals.surface_height_near(at, reach));
+            let lowest = profile.iter().copied().fold(0.0_f32, f32::min);
+            let highest = profile.iter().copied().fold(0.0_f32, f32::max);
+            let reach = LINE_REACH_OFF_PROFILE_YARDS;
+            let frame = frame_for(&mark.spec, lowest - reach, highest + reach);
+            decals.project_where(
+                &mut mark.verts,
+                &frame,
+                keep_floor,
+                |p| reach_fade(p.y - profile_height_at(&profile, -p.z), reach),
+                |x, z| frame.rect_uv(x, z),
+            );
+        } else {
+            let reach = reach_for(drawn_size(&mark.spec));
+            let frame = frame_for(&mark.spec, -reach, reach);
+            decals.project_where(
+                &mut mark.verts,
+                &frame,
+                keep_floor,
+                |p| reach_fade(p.y, reach),
+                |x, z| frame.rect_uv(x, z),
+            );
+        }
     }
 }
 
@@ -361,11 +432,74 @@ pub fn push_telegraphs(
 mod tests {
     use super::*;
 
+    fn line_spec(yaw: f32, size: f32) -> MarkSpec {
+        MarkSpec {
+            key: "t1".into(),
+            shape: Shape::Line,
+            at: Vec3::new(10.0, 5.0, -3.0),
+            yaw,
+            size,
+            duration: Some(1.0),
+            outline_only: false,
+            additive: false,
+            style: 0,
+            follow: 0,
+            texture: None,
+            done: 0.0,
+        }
+    }
+
     #[test]
-    fn a_line_is_whole_three_yard_pieces_up_to_twelve() {
-        assert_eq!(line_length(1.0), 3.0);
-        assert_eq!(line_length(10.0), 9.0);
+    fn a_line_is_as_long_as_sent_up_to_thirty_six_yards() {
+        assert_eq!(line_length(0.5), 1.0);
+        assert_eq!(line_length(10.0), 10.0);
+        assert_eq!(line_length(13.7), 13.7);
         assert_eq!(line_length(80.0), 36.0);
+    }
+
+    #[test]
+    fn a_line_probes_along_its_own_forward_axis() {
+        let spec = line_spec(0.7, 10.0);
+        let frame = frame_for(&spec, -1.0, 1.0);
+        let probe = point_along_line(&spec, 6.0);
+        let (dx, dz) = (probe.x - spec.at.x, probe.z - spec.at.z);
+        let x_in_frame = dx * frame.cos - dz * frame.sin;
+        let z_in_frame = dz * frame.cos + dx * frame.sin;
+        assert!(x_in_frame.abs() < 1e-4);
+        assert!((z_in_frame + 6.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_line_profile_climbs_a_ramp_and_keeps_its_last_height_past_a_gap() {
+        let spec = line_spec(0.0, 6.0);
+        let ramp = |at: Vec3, reach: f32| {
+            let distance = spec.at.z - at.z;
+            let ground = spec.at.y + 0.8 * distance;
+            (distance < 4.5 && (ground - at.y).abs() <= reach).then_some(ground)
+        };
+        let profile = line_profile(&spec, ramp);
+        assert_eq!(profile.len(), 7);
+        assert!((profile[3] - 2.4).abs() < 1e-4);
+        assert!((profile[6] - 3.2).abs() < 1e-4);
+        assert!((profile_height_at(&profile, 2.5) - 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_reach_grows_with_the_shape_and_never_drops_below_four_yards() {
+        assert_eq!(reach_for(2.0), 4.0);
+        assert_eq!(reach_for(20.0), 12.0);
+        assert_eq!(reach_fade(0.0, 12.0), 1.0);
+        assert_eq!(reach_fade(12.0, 12.0), 0.0);
+    }
+
+    #[test]
+    fn a_tall_upright_face_is_a_wall_but_a_stair_riser_is_not() {
+        let tall = [Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0), Vec3::new(0.0, 3.0, 0.0)];
+        let riser = [Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0), Vec3::new(0.0, 0.5, 0.0)];
+        let slope = [Vec3::ZERO, Vec3::new(2.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 2.0)];
+        assert!(is_wall(tall));
+        assert!(!is_wall(riser));
+        assert!(!is_wall(slope));
     }
 
     #[test]

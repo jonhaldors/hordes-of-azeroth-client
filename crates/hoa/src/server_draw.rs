@@ -34,6 +34,7 @@ pub struct KitSpec {
     pub at: Vec3,
     pub yaw: f32,
     pub hold: f32,
+    pub raised: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -89,6 +90,7 @@ pub enum DrawCommand {
 
 const OUTLINE_ONLY: u32 = 1;
 const ADDITIVE: u32 = 2;
+const KIT_RAISED: u32 = 1;
 
 struct Fields<'a>(std::str::Split<'a, char>);
 
@@ -175,6 +177,7 @@ pub fn parse_line(line: &str) -> Option<DrawCommand> {
             at: fields.point()?,
             yaw: fields.f32()?,
             hold: fields.secs()?,
+            raised: fields.u32().unwrap_or(0) == KIT_RAISED,
         })),
         "fly" => Some(DrawCommand::Fly(FlightSpec {
             id: fields.u32()?,
@@ -260,6 +263,19 @@ mod tests {
         assert_eq!(spec.duration, Some(15.0));
         assert_eq!(spec.texture, None);
         assert_eq!(spec.done, 4.5);
+    }
+
+    #[test]
+    fn a_kit_is_on_the_ground_unless_the_server_says_it_is_raised() {
+        let kit = |line: &str| match parse_line(line) {
+            Some(DrawCommand::Kit(kit)) => kit,
+            other => panic!("{line} is a kit, got {other:?}"),
+        };
+        let grounded = kit("HOA~kit~92~1~2~3~0.5~1500");
+        assert_eq!(grounded.at, wow_to_bevy([1.0, 2.0, 3.0]));
+        assert_eq!(grounded.hold, 1.5);
+        assert!(!grounded.raised);
+        assert!(kit("HOA~kit~92~1~2~3~0.5~1500~1").raised);
     }
 
     #[test]

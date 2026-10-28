@@ -83,6 +83,17 @@ pub(crate) fn project_decal(
     alpha: impl Fn(Vec3) -> f32,
     uv: impl Fn(f32, f32) -> [f32; 2],
 ) -> bool {
+    project_decal_where(out, surfaces, frame, |_| true, alpha, uv)
+}
+
+fn project_decal_where(
+    out: &mut Vec<EffectVertex>,
+    surfaces: &Query<&Collider, With<GroundDecalSurface>>,
+    frame: &DecalFrame,
+    keep_triangle: impl Fn([Vec3; 3]) -> bool,
+    alpha: impl Fn(Vec3) -> f32,
+    uv: impl Fn(f32, f32) -> [f32; 2],
+) -> bool {
     let gather = frame.gather_aabb();
     if frame.max_x - frame.min_x <= 0.0 || frame.max_z - frame.min_z <= 0.0 {
         return false;
@@ -98,6 +109,9 @@ pub(crate) fn project_decal(
         }
         for i in trimesh.bvh().intersect_aabb(&gather) {
             let tri = trimesh.triangle(i);
+            if !keep_triangle([tri.a, tri.b, tri.c]) {
+                continue;
+            }
             let (poly, n) = clip_to_frame([tri.a, tri.b, tri.c], frame);
             if n < 3 {
                 continue;
@@ -184,6 +198,52 @@ impl WorldDecal<'_, '_> {
         project_decal(out, &self.surfaces, frame, alpha, uv)
     }
 
+    pub fn project_where(
+        &self,
+        out: &mut Vec<crate::particles::buffer::EffectVertex>,
+        frame: &DecalFrame,
+        keep_triangle: impl Fn([Vec3; 3]) -> bool,
+        alpha: impl Fn(Vec3) -> f32,
+        uv: impl Fn(f32, f32) -> [f32; 2],
+    ) -> bool {
+        project_decal_where(out, &self.surfaces, frame, keep_triangle, alpha, uv)
+    }
+
+    pub fn surface_height_near(&self, at: Vec3, reach: f32) -> Option<f32> {
+        let column = ParryAabb::new(
+            Vec3::new(
+                at.x - COLUMN_HALF_WIDTH,
+                at.y - reach,
+                at.z - COLUMN_HALF_WIDTH,
+            ),
+            Vec3::new(
+                at.x + COLUMN_HALF_WIDTH,
+                at.y + reach,
+                at.z + COLUMN_HALF_WIDTH,
+            ),
+        );
+        let mut nearest: Option<f32> = None;
+        for collider in &self.surfaces {
+            let Some(trimesh) = collider.shape().as_trimesh() else {
+                continue;
+            };
+            if !trimesh.local_aabb().intersects(&column) {
+                continue;
+            }
+            for i in trimesh.bvh().intersect_aabb(&column) {
+                let tri = trimesh.triangle(i);
+                let Some(height) = height_on_triangle([tri.a, tri.b, tri.c], at.x, at.z) else {
+                    continue;
+                };
+                let offset = (height - at.y).abs();
+                if offset <= reach && nearest.is_none_or(|best| offset < (best - at.y).abs()) {
+                    nearest = Some(height);
+                }
+            }
+        }
+        nearest
+    }
+
     /// How many receiving surfaces are resident; with none, a decal has nothing to land on.
     pub fn receiver_count(&self) -> usize {
         self.surfaces.iter().count()
@@ -193,6 +253,26 @@ impl WorldDecal<'_, '_> {
     pub fn receives(&self, entity: Entity) -> bool {
         self.surfaces.contains(entity)
     }
+}
+
+const COLUMN_HALF_WIDTH: f32 = 0.01;
+const BARYCENTRIC_SLACK: f32 = 1e-4;
+const FLAT_SHADOW_AREA: f32 = 1e-6;
+
+fn height_on_triangle([a, b, c]: [Vec3; 3], x: f32, z: f32) -> Option<f32> {
+    let (ab_x, ab_z) = (b.x - a.x, b.z - a.z);
+    let (ac_x, ac_z) = (c.x - a.x, c.z - a.z);
+    let shadow = ab_x * ac_z - ac_x * ab_z;
+    if shadow.abs() < FLAT_SHADOW_AREA {
+        return None;
+    }
+    let (px, pz) = (x - a.x, z - a.z);
+    let toward_b = (px * ac_z - ac_x * pz) / shadow;
+    let toward_c = (ab_x * pz - px * ab_z) / shadow;
+    let inside = toward_b >= -BARYCENTRIC_SLACK
+        && toward_c >= -BARYCENTRIC_SLACK
+        && toward_b + toward_c <= 1.0 + BARYCENTRIC_SLACK;
+    inside.then_some(a.y + toward_b * (b.y - a.y) + toward_c * (c.y - a.y))
 }
 
 #[cfg(test)]
@@ -247,6 +327,23 @@ mod tests {
                 Vec3::new(0.0, 0.0, 0.5),
             ]
         );
+    }
+
+    #[test]
+    fn the_height_under_a_point_follows_the_triangle_slope() {
+        let ramp = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(4.0, 2.0, 0.0),
+            Vec3::new(0.0, 0.0, 4.0),
+        ];
+        assert_eq!(height_on_triangle(ramp, 2.0, 1.0), Some(1.0));
+        assert_eq!(height_on_triangle(ramp, 3.0, 3.0), None);
+        let wall = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(4.0, 0.0, 0.0),
+            Vec3::new(0.0, 4.0, 0.0),
+        ];
+        assert_eq!(height_on_triangle(wall, 1.0, 0.0), None);
     }
 
     #[test]
