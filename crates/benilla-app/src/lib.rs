@@ -210,6 +210,7 @@ pub use benilla_protocol::{messages::ObjectType, ObjectFields};
 pub use creature_anim::fx_anchor::{AnchorFx, FxAnchor};
 pub use ui_chat::{ChatTap, TappedLine};
 pub use net::Objects;
+pub use entities::ViewerOverheadHeight;
 pub use player::pad_steer::PadSteer;
 pub use target::Interact;
 pub use vm_seed::{run_hosted, seed_every_vm};

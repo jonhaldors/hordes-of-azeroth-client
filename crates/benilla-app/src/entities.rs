@@ -206,6 +206,23 @@ pub(crate) fn overhead_anchor<F: bevy::ecs::query::QueryFilter>(
         })
 }
 
+#[derive(Resource, Default)]
+pub struct ViewerOverheadHeight(pub Option<f32>);
+
+fn track_viewer_overhead(
+    mut out: ResMut<ViewerOverheadHeight>,
+    viewer: Query<(Entity, &Transform), With<benilla_world::world_unit::ViewerUnit>>,
+    anchors: Query<&BoneAttach>,
+    poses: Query<&benilla_world::rig_anim::RigPose>,
+    fallbacks: Query<&OverheadFallback>,
+    globals: Query<&GlobalTransform>,
+    mounts: Query<(), With<mount::MountChild>>,
+) {
+    out.0 = viewer.single().ok().map(|(entity, tf)| {
+        overhead_anchor(entity, tf, &anchors, &poses, &fallbacks, &globals, &mounts).y - tf.translation.y
+    });
+}
+
 /// Marks the cube spawned for an entity whose display named no loadable model, so
 /// `WOW_UNIT_VISUALS` can count the cubes and their displays.
 #[derive(Component)]
@@ -657,6 +674,8 @@ impl Plugin for EntitiesPlugin {
                 .after(benilla_world::schedule::WorldStage::Net)
                 .before(benilla_world::schedule::WorldStage::Input),
         )
+        .init_resource::<ViewerOverheadHeight>()
+        .add_systems(Update, track_viewer_overhead)
         .init_resource::<SkinComposites>()
         .init_resource::<attach::MergedFormsCache>()
         // The 16 bone-pile bodies, keyed by (race, sex): a skeleton has no display row.

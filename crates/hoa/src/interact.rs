@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use benilla_app::{Interact, ObjectFields, Objects};
+use benilla_app::{Interact, ObjectFields, Objects, ViewerOverheadHeight};
 use benilla_protocol::guid;
 use benilla_world::view::WorldCamera;
 use benilla_world::world_unit::{ViewerUnit, WorldUnit};
@@ -176,6 +176,7 @@ pub fn update_interact(
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     shared: NonSend<SharedInteract>,
     mut interacts: MessageWriter<Interact>,
+    overhead: Option<Res<ViewerOverheadHeight>>,
 ) {
     let mut state = shared.0.borrow_mut();
     state.now = time.elapsed_secs_f64();
@@ -243,7 +244,10 @@ pub fn update_interact(
             )
         }),
     });
-    if let Some(height) = my_unit.map(|w| w.height).filter(|h| *h > 0.0) {
+    let measured = overhead
+        .and_then(|o| o.0)
+        .or_else(|| my_unit.map(|w| w.height));
+    if let Some(height) = measured.filter(|h| *h > 0.0) {
         state.player_height = smoothed_height(state.player_height, height);
     }
     let head_height = if state.player_height > 0.0 {
