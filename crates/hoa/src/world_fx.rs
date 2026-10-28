@@ -89,6 +89,7 @@ pub fn apply_draw_lines(
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs();
+    let mut fresh_auras: Vec<(u32, Entity)> = Vec::new();
     for line in lines.read() {
         let Some(command) = parse_line(&line.0) else {
             continue;
@@ -103,6 +104,9 @@ pub fn apply_draw_lines(
                     commands.entity(entity).despawn();
                 }
                 for (entity, _) in &props {
+                    commands.entity(entity).despawn();
+                }
+                for (_, entity) in fresh_auras.drain(..) {
                     commands.entity(entity).despawn();
                 }
             }
@@ -148,6 +152,7 @@ pub fn apply_draw_lines(
                     anchor,
                     spell_id: aura.spell_id,
                 });
+                fresh_auras.push((aura.key, anchor));
             }
             DrawCommand::RemoveAura(key) => {
                 for (entity, anchor) in &auras {
@@ -155,6 +160,13 @@ pub fn apply_draw_lines(
                         commands.entity(entity).despawn();
                     }
                 }
+                fresh_auras.retain(|&(fresh_key, entity)| {
+                    if fresh_key != key {
+                        return true;
+                    }
+                    commands.entity(entity).despawn();
+                    false
+                });
             }
         }
     }
