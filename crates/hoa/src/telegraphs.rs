@@ -61,6 +61,37 @@ const PALETTES: [Palette; 5] = [
     },
 ];
 
+const GROUND_PALETTES: [Palette; 5] = [
+    Palette {
+        rim: [1.0, 0.50, 0.10],
+        wash: [0.40, 0.12, 0.0],
+    },
+    Palette {
+        rim: [0.70, 0.50, 1.0],
+        wash: [0.15, 0.05, 0.35],
+    },
+    Palette {
+        rim: [0.45, 0.95, 0.35],
+        wash: [0.03, 0.20, 0.02],
+    },
+    Palette {
+        rim: [0.55, 0.85, 1.0],
+        wash: [0.02, 0.12, 0.30],
+    },
+    Palette {
+        rim: [0.60, 0.05, 0.06],
+        wash: [0.25, 0.0, 0.02],
+    },
+];
+
+const GROUND_HAZE_ALPHA: f32 = 0.5;
+const GROUND_HAZE_CURVE: f32 = 1.8;
+const GROUND_RIM_ALPHA: f32 = 0.6;
+const GROUND_RIM_SOFT_YARDS: f32 = 0.5;
+const GROUND_MAX_ALPHA: f32 = 0.8;
+const GROUND_EDGE_FADE_YARDS: f32 = 0.25;
+const GROUND_WOBBLE_PER_YARD: f32 = 0.04;
+const GROUND_WOBBLE_MAX_YARDS: f32 = 0.6;
 const OUTLINE_RIM_ALPHA: f32 = 0.95;
 const OUTLINE_WASH_ALPHA: f32 = 0.12;
 const FILL_WASH_ALPHA: f32 = 0.38;
@@ -70,6 +101,7 @@ const FILL_FRONT_ALPHA: f32 = 0.7;
 enum Layer {
     Outline,
     Fill,
+    Ground,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -232,10 +264,33 @@ fn distance_inside(shape: Shape, size: f32, x: f32, z: f32) -> f32 {
     }
 }
 
+fn edge_wobble(size: f32, x: f32, z: f32) -> f32 {
+    let angle = z.atan2(x);
+    let amplitude = (size * GROUND_WOBBLE_PER_YARD).min(GROUND_WOBBLE_MAX_YARDS);
+    amplitude * (0.6 * (5.0 * angle).sin() + 0.4 * (11.0 * angle + 1.3).sin())
+}
+
+fn ground_texel(key: TextureKey, size: f32, x: f32, z: f32) -> ([f32; 3], f32) {
+    let palette = GROUND_PALETTES[usize::from(key.style).min(GROUND_PALETTES.len() - 1)];
+    let inside = distance_inside(key.shape, size, x, z) + edge_wobble(size, x, z);
+    if inside <= 0.0 {
+        return (palette.wash, 0.0);
+    }
+    let toward_edge = (1.0 - inside / size.max(0.1)).clamp(0.0, 1.0);
+    let haze = GROUND_HAZE_ALPHA * toward_edge.powf(GROUND_HAZE_CURVE);
+    let rim = (-(inside / GROUND_RIM_SOFT_YARDS).powi(2)).exp();
+    let fade = (inside / GROUND_EDGE_FADE_YARDS).clamp(0.0, 1.0);
+    let light = toward_edge.max(rim);
+    let colour = std::array::from_fn(|i| palette.wash[i] + (palette.rim[i] - palette.wash[i]) * light);
+    (colour, (haze + GROUND_RIM_ALPHA * rim).min(GROUND_MAX_ALPHA) * fade)
+}
+
 fn texel(key: TextureKey, size: f32, x: f32, z: f32) -> [u8; 4] {
     let palette = PALETTES[usize::from(key.style).min(PALETTES.len() - 1)];
     let inside = distance_inside(key.shape, size, x, z);
-    let (colour, alpha) = if inside <= 0.0 {
+    let (colour, alpha) = if key.layer == Layer::Ground {
+        ground_texel(key, size, x, z)
+    } else if inside <= 0.0 {
         (palette.wash, 0.0)
     } else {
         match key.layer {
@@ -244,7 +299,7 @@ fn texel(key: TextureKey, size: f32, x: f32, z: f32) -> [u8; 4] {
                 let colour = std::array::from_fn(|i| palette.wash[i] + (palette.rim[i] - palette.wash[i]) * rim);
                 (colour, OUTLINE_WASH_ALPHA + (OUTLINE_RIM_ALPHA - OUTLINE_WASH_ALPHA) * rim)
             }
-            Layer::Fill => {
+            Layer::Fill | Layer::Ground => {
                 let front = band(inside);
                 (palette.wash, FILL_WASH_ALPHA + (FILL_FRONT_ALPHA - FILL_WASH_ALPHA) * front)
             }
@@ -394,6 +449,7 @@ pub fn push_telegraphs(
         };
         let (outline, fill) = match &spec.texture {
             Some(texture) => (telegraphs.game_texture(&assets, texture), None),
+            None if spec.ground_effect => (telegraphs.baked_texture(&mut images, &spec, Layer::Ground), None),
             None => (
                 telegraphs.baked_texture(&mut images, &spec, Layer::Outline),
                 (!spec.outline_only).then(|| telegraphs.baked_texture(&mut images, &spec, Layer::Fill)),
@@ -442,6 +498,7 @@ mod tests {
             duration: Some(1.0),
             outline_only: false,
             additive: false,
+            ground_effect: false,
             style: 0,
             follow: 0,
             texture: None,

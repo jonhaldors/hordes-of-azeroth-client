@@ -22,6 +22,7 @@ pub struct MarkSpec {
     pub duration: Option<f32>,
     pub outline_only: bool,
     pub additive: bool,
+    pub ground_effect: bool,
     pub style: u8,
     pub follow: u64,
     pub texture: Option<String>,
@@ -90,6 +91,7 @@ pub enum DrawCommand {
 
 const OUTLINE_ONLY: u32 = 1;
 const ADDITIVE: u32 = 2;
+const GROUND_EFFECT: u32 = 4;
 const KIT_RAISED: u32 = 1;
 
 struct Fields<'a>(std::str::Split<'a, char>);
@@ -150,6 +152,7 @@ fn mark(key: String, fields: &mut Fields, persistent_allowed: bool) -> Option<Dr
         duration: (duration > 0.0 || !persistent_allowed).then_some(duration),
         outline_only: flags & OUTLINE_ONLY != 0,
         additive: flags & ADDITIVE != 0,
+        ground_effect: flags & GROUND_EFFECT != 0,
         style,
         follow,
         texture,
