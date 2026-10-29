@@ -19,7 +19,7 @@ use benilla_world::vis_chain::VisChainOnly;
 
 use super::motion::{
     create_spline, gameobject_rotation, monster_move_spline, pose_transform, resolve_facing,
-    trace_create_spline, trace_move_snap, wire_yaw, write_pose, Backstep, SplineStopped, BACKSTEP_MAX_MS,
+    trace_create_spline, trace_move_snap, wire_yaw, write_pose, is_backstep, Backstep, SplineStopped,
     ROOT_APPLY_WIPE,
 };
 use super::{
@@ -967,6 +967,17 @@ fn monster_move(
         // The spline supersedes the relay stream: a splined player (charge, taxi) would otherwise
         // keep stale flags that outrank the spline in the anim selector.
         commands.entity(e).remove::<RemoteMotion>();
+        let backstep = match facing {
+            MonsterMoveFacing::Target(target) => {
+                let target_pos = index
+                    .0
+                    .get(&target)
+                    .and_then(|&te| transforms.get(te).ok())
+                    .map(|t| bevy_to_wow(t.translation));
+                is_backstep(start, path.last().copied(), target_pos, duration_ms)
+            }
+            _ => false,
+        };
         let path = match transport {
             None => start_where_drawn(path, transforms.get(e).ok().map(|t| bevy_to_wow(t.translation))),
             Some(_) => path,
@@ -981,8 +992,6 @@ fn monster_move(
             transport,
         ) {
             Some(spline) => {
-                let backstep =
-                    matches!(facing, MonsterMoveFacing::Target(_)) && duration_ms <= BACKSTEP_MAX_MS;
                 let mut entity = commands.entity(e);
                 entity.insert(spline).remove::<SplineStopped>();
                 if backstep {

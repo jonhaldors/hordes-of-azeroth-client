@@ -48,6 +48,18 @@ pub(crate) struct Backstep;
 
 pub(crate) const BACKSTEP_MAX_MS: u32 = 400;
 
+pub(crate) fn is_backstep(start: [f32; 3], end: Option<[f32; 3]>, target: Option<[f32; 3]>, duration_ms: u32) -> bool {
+    if duration_ms <= BACKSTEP_MAX_MS {
+        return true;
+    }
+    let (Some(end), Some(target)) = (end, target) else {
+        return false;
+    };
+    let travel = [end[0] - start[0], end[1] - start[1]];
+    let toward = [target[0] - start[0], target[1] - start[1]];
+    travel[0] * toward[0] + travel[1] * toward[1] < 0.0
+}
+
 impl Spline {
     /// Average speed in yd/s (path length over duration); [`crate::creature_anim`] picks Walk or
     /// Run from it.
@@ -1049,6 +1061,21 @@ pub(in crate::net) fn mark_swimming_creatures(
 
 /// A unit created inside a building whose floor collider has not attached yet, and what happens
 /// to it when the floor lands: the seat lets the probe reach the floor, the epoch makes it re-ask.
+#[cfg(test)]
+mod backstep {
+    use super::is_backstep;
+
+    #[test]
+    fn moving_away_from_the_faced_target_keeps_facing() {
+        let start = [0.0, 0.0, 0.0];
+        let hero = Some([5.0, 0.0, 0.0]);
+        assert!(is_backstep(start, Some([-3.0, 0.0, 0.0]), hero, 900));
+        assert!(!is_backstep(start, Some([3.0, 0.0, 0.0]), hero, 900));
+        assert!(is_backstep(start, Some([3.0, 0.0, 0.0]), hero, 200));
+        assert!(!is_backstep(start, None, None, 900));
+    }
+}
+
 #[cfg(test)]
 mod under_floor {
     use avian3d::prelude::*;
