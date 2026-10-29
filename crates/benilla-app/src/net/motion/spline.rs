@@ -43,6 +43,11 @@ pub(crate) struct Spline {
 #[derive(Component, Debug, Clone, Copy)]
 pub(crate) struct SplineStopped(pub(crate) u32);
 
+#[derive(Component, Debug, Clone, Copy)]
+pub(crate) struct Backstep;
+
+pub(crate) const BACKSTEP_MAX_MS: u32 = 400;
+
 impl Spline {
     /// Average speed in yd/s (path length over duration); [`crate::creature_anim`] picks Walk or
     /// Run from it.
@@ -326,6 +331,7 @@ pub(in crate::net) fn sample_splines(
         // A deck path's destination; `transport::compose_riders` carries it to the world later.
         Option<&mut crate::transport::TransportRider>,
         Has<crate::net::SelfPlayer>,
+        Has<Backstep>,
     )>,
     mut trace_next: Local<f32>,
     time: Res<Time>,
@@ -337,7 +343,7 @@ pub(in crate::net) fn sample_splines(
     if tick {
         *trace_next = time.elapsed_secs() + SPL_TRACE_SECS;
     }
-    for (entity, spline, mut t, swimming, guid, rider, is_self) in &mut q {
+    for (entity, spline, mut t, swimming, guid, rider, is_self, backstep) in &mut q {
         let (wow_pos, facing, pitch) = spline.sample(now);
         // A deck path's sample is the rider's transport-local pose, composed later this frame.
         if let Some(deck) = spline.deck {
@@ -368,7 +374,9 @@ pub(in crate::net) fn sample_splines(
             } else {
                 (0.0, 0.0)
             };
-            t.rotation = if pitch != 0.0 || bank != 0.0 {
+            t.rotation = if backstep {
+                t.rotation
+            } else if pitch != 0.0 || bank != 0.0 {
                 Quat::from_rotation_y(f)
                     * Quat::from_rotation_x(pitch)
                     * Quat::from_rotation_z(bank)

@@ -19,7 +19,8 @@ use benilla_world::vis_chain::VisChainOnly;
 
 use super::motion::{
     create_spline, gameobject_rotation, monster_move_spline, pose_transform, resolve_facing,
-    trace_create_spline, trace_move_snap, wire_yaw, write_pose, SplineStopped, ROOT_APPLY_WIPE,
+    trace_create_spline, trace_move_snap, wire_yaw, write_pose, Backstep, SplineStopped, BACKSTEP_MAX_MS,
+    ROOT_APPLY_WIPE,
 };
 use super::{
     ActiveMover, FieldChanged, Guid, GuidIndex, NetCommands, NetEntity, NetHandlerApp, ObjectStore,
@@ -980,7 +981,15 @@ fn monster_move(
             transport,
         ) {
             Some(spline) => {
-                commands.entity(e).insert(spline).remove::<SplineStopped>();
+                let backstep =
+                    matches!(facing, MonsterMoveFacing::Target(_)) && duration_ms <= BACKSTEP_MAX_MS;
+                let mut entity = commands.entity(e);
+                entity.insert(spline).remove::<SplineStopped>();
+                if backstep {
+                    entity.insert(Backstep);
+                } else {
+                    entity.remove::<Backstep>();
+                }
             }
             // A stop keeps the id, which the server awaits back for a player-driven unit.
             None => {
