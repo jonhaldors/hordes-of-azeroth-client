@@ -4,8 +4,10 @@ use std::rc::Rc;
 
 use benilla_app::{Interact, ObjectFields, Objects, ViewerOverheadHeight};
 use benilla_protocol::guid;
+use benilla_world::interact::GoPickPart;
 use benilla_world::view::WorldCamera;
 use benilla_world::world_unit::{ViewerUnit, WorldUnit};
+use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
 
 const UNIT_REACH: f32 = 5.4;
@@ -22,6 +24,7 @@ const UNIT_FLAG_NOT_SELECTABLE: u32 = 0x0200_0000;
 const OBJECT_FLAG_IN_USE: u32 = 0x01;
 const OBJECT_FLAG_NO_INTERACT: u32 = 0x10;
 const OBJECT_STATE_ACTIVE: u32 = 0;
+const PART_OWNER_HOPS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Candidate {
@@ -159,6 +162,61 @@ fn to_screen(camera: &Camera, eye: &GlobalTransform, world: Vec3) -> Option<Vec2
     Some(Vec2::new((ndc.x + 1.0) * 0.5, (ndc.y + 1.0) * 0.5))
 }
 
+fn owning_object(
+    part: Entity,
+    objects: &HashSet<Entity>,
+    parents: &Query<&ChildOf>,
+) -> Option<Entity> {
+    let mut entity = part;
+    for _ in 0..PART_OWNER_HOPS {
+        if objects.contains(&entity) {
+            return Some(entity);
+        }
+        entity = parents.get(entity).ok()?.parent();
+    }
+    None
+}
+
+fn world_box(aabb: &Aabb, transform: &GlobalTransform) -> (Vec3, Vec3) {
+    let center = Vec3::from(aabb.center);
+    let half = Vec3::from(aabb.half_extents);
+    let mut min = Vec3::splat(f32::MAX);
+    let mut max = Vec3::splat(f32::MIN);
+    for corner in 0..8u8 {
+        let side = |bit: u8| if corner & bit == 0 { -1.0 } else { 1.0 };
+        let point = transform.transform_point(center + half * Vec3::new(side(1), side(2), side(4)));
+        min = min.min(point);
+        max = max.max(point);
+    }
+    (min, max)
+}
+
+fn object_boxes(
+    objects: &HashSet<Entity>,
+    parts: &Query<(Entity, &Aabb, &GlobalTransform), With<GoPickPart>>,
+    parents: &Query<&ChildOf>,
+) -> HashMap<Entity, (Vec3, Vec3)> {
+    let mut boxes: HashMap<Entity, (Vec3, Vec3)> = HashMap::new();
+    for (part, aabb, transform) in parts {
+        let Some(owner) = owning_object(part, objects, parents) else {
+            continue;
+        };
+        let (min, max) = world_box(aabb, transform);
+        boxes
+            .entry(owner)
+            .and_modify(|joined| {
+                joined.0 = joined.0.min(min);
+                joined.1 = joined.1.max(max);
+            })
+            .or_insert((min, max));
+    }
+    boxes
+}
+
+fn distance_to_box(from: Vec3, bounds: (Vec3, Vec3)) -> f32 {
+    from.clamp(bounds.0, bounds.1).distance(from)
+}
+
 fn smoothed_height(previous: f32, measured: f32) -> f32 {
     if previous > 0.0 {
         previous + (measured - previous) * PLAYER_HEIGHT_SMOOTHING
@@ -177,6 +235,8 @@ pub fn update_interact(
     shared: NonSend<SharedInteract>,
     mut interacts: MessageWriter<Interact>,
     overhead: Option<Res<ViewerOverheadHeight>>,
+    object_parts: Query<(Entity, &Aabb, &GlobalTransform), With<GoPickPart>>,
+    parents: Query<&ChildOf>,
 ) {
     let mut state = shared.0.borrow_mut();
     state.now = time.elapsed_secs_f64();
@@ -191,6 +251,12 @@ pub fn update_interact(
         return;
     };
     let from = my_body.translation();
+    let object_entities: HashSet<Entity> = objects
+        .iter()
+        .filter(|(object_guid, _, _)| guid::is_gameobject(*object_guid))
+        .map(|(_, entity, _)| entity)
+        .collect();
+    let boxes = object_boxes(&object_entities, &object_parts, &parents);
     let mut nearby = Vec::new();
     for (object_guid, entity, fields) in objects.iter() {
         if Some(entity) == player {
@@ -209,7 +275,10 @@ pub fn update_interact(
         };
         let feet = body.translation();
         let entry = fields.object_entry().unwrap_or(0);
-        let distance = feet.distance(from);
+        let distance = match boxes.get(&entity) {
+            Some(&bounds) if !unit => distance_to_box(from, bounds),
+            _ => feet.distance(from),
+        };
         let too_high = (feet.y - from.y).abs() > MAX_HEIGHT_DIFFERENCE;
         if too_high || distance > state.reach_of(entry, unit) {
             continue;
@@ -274,6 +343,24 @@ mod tests {
             feet: Vec3::ZERO,
             head_height: 1.0,
         }
+    }
+
+    #[test]
+    fn an_object_is_reached_from_any_side_of_its_box() {
+        let chest = (Vec3::new(0.0, 0.0, 0.0), Vec3::new(4.0, 1.0, 2.0));
+        assert_eq!(distance_to_box(Vec3::new(2.0, 0.0, 1.0), chest), 0.0);
+        assert!((distance_to_box(Vec3::new(-3.0, 0.0, 1.0), chest) - 3.0).abs() < 1e-5);
+        assert!((distance_to_box(Vec3::new(7.0, 0.0, 1.0), chest) - 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_box_follows_its_part_transform() {
+        let aabb = Aabb::from_min_max(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        let transform =
+            GlobalTransform::from(Transform::from_xyz(10.0, 0.0, 0.0).with_scale(Vec3::splat(2.0)));
+        let (min, max) = world_box(&aabb, &transform);
+        assert!(min.abs_diff_eq(Vec3::new(8.0, 0.0, -2.0), 1e-5));
+        assert!(max.abs_diff_eq(Vec3::new(12.0, 2.0, 2.0), 1e-5));
     }
 
     #[test]
