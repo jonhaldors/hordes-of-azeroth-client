@@ -44,6 +44,8 @@ pub(super) fn apply_scoped_view(
     spells: Option<Res<Spells>>,
     mut scoped: ResMut<ScopedView>,
     mut projections: Query<&mut Projection, With<WorldCamera>>,
+    mut player: ResMut<super::Player>,
+    real: Res<Time<Real>>,
 ) {
     let catalog = spells.as_ref().map(|s| &s.catalog);
     scoped.zoom = self_q
@@ -67,7 +69,11 @@ pub(super) fn apply_scoped_view(
     let Ok(mut projection) = projections.single_mut() else {
         return;
     };
-    let want = CAM_FOVY * scoped.zoom.unwrap_or(1.0);
+    let dash_kick = player.dash.tick_fov_kick(real.delta_secs());
+    let want = match scoped.zoom {
+        Some(zoom) => CAM_FOVY * zoom,
+        None => CAM_FOVY * dash_kick,
+    };
     if let Projection::Perspective(PerspectiveProjection { fov, .. }) = &mut *projection {
         if (*fov - want).abs() > f32::EPSILON {
             *fov = want;

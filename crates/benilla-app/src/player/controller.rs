@@ -604,6 +604,7 @@ pub(super) fn control(
         if let Some(driven) = driven_speeds {
             match player.dash.watch_run_speed(driven.run) {
                 dash::RunSpeedEdge::DashStarted => {
+                    player.dash.start_fov_kick();
                     let standing = axes.fwd == 0 && axes.side == 0;
                     if standing && may_translate && player.airborne_since.is_none() {
                         player.dash.start_standing_dash();

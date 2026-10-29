@@ -6,12 +6,16 @@ use super::input::MoveAxes;
 const DASH_SPEED_MIN: f32 = 20.0;
 const AIR_DASH_SECS: f32 = 0.2;
 const STANDING_DASH_GIVE_UP_SECS: f32 = 0.6;
+const DASH_FOV_KICK: f32 = 0.08;
+const DASH_FOV_RISE_SECS: f32 = 0.06;
+const DASH_FOV_FALL_SECS: f32 = 0.35;
 
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub(crate) struct DashState {
     last_run_speed: f32,
     standing_dash_left: f32,
     air_dash_left: f32,
+    fov_kick_elapsed: Option<f32>,
     pub(super) held: bool,
 }
 
@@ -47,6 +51,14 @@ pub(super) fn capped_horizontal(velocity: Vec3, cap: f32) -> Vec3 {
     }
 }
 
+fn fov_kick_scale(elapsed: f32) -> f32 {
+    if elapsed < DASH_FOV_RISE_SECS {
+        return 1.0 + DASH_FOV_KICK * elapsed / DASH_FOV_RISE_SECS;
+    }
+    let falling = ((elapsed - DASH_FOV_RISE_SECS) / DASH_FOV_FALL_SECS).min(1.0);
+    1.0 + DASH_FOV_KICK * (1.0 - falling) * (1.0 - falling)
+}
+
 fn is_dash_speed(run: f32) -> bool {
     run >= DASH_SPEED_MIN
 }
@@ -62,6 +74,20 @@ impl DashState {
             return RunSpeedEdge::DashEnded { run };
         }
         RunSpeedEdge::Steady
+    }
+
+    pub(super) fn start_fov_kick(&mut self) {
+        self.fov_kick_elapsed = Some(0.0);
+    }
+
+    pub(super) fn tick_fov_kick(&mut self, dt: f32) -> f32 {
+        let Some(elapsed) = self.fov_kick_elapsed else {
+            return 1.0;
+        };
+        let scale = fov_kick_scale(elapsed);
+        let next = elapsed + dt;
+        self.fov_kick_elapsed = (next < DASH_FOV_RISE_SECS + DASH_FOV_FALL_SECS).then_some(next);
+        scale
     }
 
     pub(super) fn start_standing_dash(&mut self) {
@@ -121,6 +147,19 @@ mod tests {
             turn_left: false,
             turn_right: false,
         }
+    }
+
+    #[test]
+    fn dash_fov_kick_rises_then_settles() {
+        let mut dash = DashState::default();
+        assert_eq!(dash.tick_fov_kick(0.03), 1.0);
+        dash.start_fov_kick();
+        assert_eq!(dash.tick_fov_kick(DASH_FOV_RISE_SECS), 1.0);
+        let peak = dash.tick_fov_kick(0.1);
+        assert!((peak - (1.0 + DASH_FOV_KICK)).abs() < 1e-5);
+        let easing = dash.tick_fov_kick(1.0);
+        assert!(easing > 1.0 && easing < peak);
+        assert_eq!(dash.tick_fov_kick(0.03), 1.0);
     }
 
     #[test]
