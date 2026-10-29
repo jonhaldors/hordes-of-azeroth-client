@@ -355,6 +355,17 @@ pub fn steer_from(controller: &Controller, changed: u32) -> PadSteer {
     }
 }
 
+pub fn log_new_pads(pads: Query<(&Gamepad, Option<&Name>), Added<Gamepad>>) {
+    for (pad, name) in &pads {
+        info!(
+            "controller connected: {} (vendor {:04x}, product {:04x})",
+            name.map_or("unnamed", |n| n.as_str()),
+            pad.vendor_id().unwrap_or(0),
+            pad.product_id().unwrap_or(0)
+        );
+    }
+}
+
 pub fn poll_pads(
     time: Res<Time<Real>>,
     pads: Query<&Gamepad>,

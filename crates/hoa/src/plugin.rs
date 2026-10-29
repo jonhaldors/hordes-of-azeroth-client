@@ -6,7 +6,7 @@ use crate::interact::{update_interact, SharedInteract};
 use crate::keys::{capture_typing, SharedTyping};
 use crate::lua_api::{scripted_login_from_env, LuaHosts};
 use crate::nameplates::{add_plate_events, track_nameplates, SharedPlates};
-use crate::pad::{poll_pads, SharedController};
+use crate::pad::{log_new_pads, poll_pads, SharedController};
 use crate::snapshot::{capture_snapshot, SharedSnapshot};
 use crate::world_map::SharedMapAreas;
 use crate::telegraphs::{expire_telegraphs, follow_marks, project_telegraphs, push_telegraphs, Telegraphs};
@@ -37,7 +37,7 @@ impl Plugin for HordesOfAzerothPlugin {
             .add_systems(Startup, (name_window, announce_addon_folder, tap_draw_lines))
             .add_systems(
                 PreUpdate,
-                (notice_keyboard_and_mouse, poll_pads, drive_pad_cursor)
+                (log_new_pads, notice_keyboard_and_mouse, poll_pads, drive_pad_cursor)
                     .chain()
                     .after(bevy::input::InputSystems),
             )
