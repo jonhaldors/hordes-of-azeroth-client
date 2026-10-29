@@ -24,6 +24,7 @@ benilla-formats = { path = "../benilla-formats", default-features = false }
 # For the portal audit, which re-parses a WMO group to check its decode against the file.
 benilla-wmo = { path = "../benilla-wmo" }
 bevy.workspace = true
+wgpu.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 

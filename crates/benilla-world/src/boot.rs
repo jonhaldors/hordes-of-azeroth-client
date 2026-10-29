@@ -69,4 +69,79 @@ pub fn tuned_default_plugins(primary_window: Window) -> PluginGroupBuilder {
         .disable::<bevy::anti_alias::AntiAliasPlugin>()
         // No gamepad input; 1.12's bindings are keyboard/mouse.
         .disable::<bevy::gilrs::GilrsPlugin>()
+        .set(bevy::render::RenderPlugin {
+            render_creation: render_settings().into(),
+            ..default()
+        })
+}
+
+fn render_settings() -> bevy::render::settings::WgpuSettings {
+    let mut settings = bevy::render::settings::WgpuSettings::default();
+    let backends = settings.backends.unwrap_or(wgpu::Backends::all());
+    if backends.contains(wgpu::Backends::GL) && !has_adapter_besides_gl(backends) {
+        settings.constrained_limits = Some(gl_limits());
+    }
+    settings
+}
+
+fn has_adapter_besides_gl(backends: wgpu::Backends) -> bool {
+    let others = backends - wgpu::Backends::GL;
+    if others.is_empty() {
+        return false;
+    }
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: others,
+        ..default()
+    });
+    !instance.enumerate_adapters(others).is_empty()
+}
+
+fn gl_limits() -> wgpu::Limits {
+    let most = u32::MAX;
+    wgpu::Limits {
+        max_texture_dimension_1d: most,
+        max_texture_dimension_2d: most,
+        max_texture_dimension_3d: most,
+        max_texture_array_layers: most,
+        max_bind_groups: most,
+        max_bindings_per_bind_group: most,
+        max_dynamic_uniform_buffers_per_pipeline_layout: most,
+        max_dynamic_storage_buffers_per_pipeline_layout: most,
+        max_sampled_textures_per_shader_stage: most,
+        max_samplers_per_shader_stage: most,
+        max_storage_buffers_per_shader_stage: most,
+        max_storage_textures_per_shader_stage: 4,
+        max_uniform_buffers_per_shader_stage: most,
+        max_binding_array_elements_per_shader_stage: most,
+        max_binding_array_sampler_elements_per_shader_stage: most,
+        max_uniform_buffer_binding_size: most,
+        max_storage_buffer_binding_size: most,
+        max_vertex_buffers: most,
+        max_buffer_size: u64::MAX,
+        max_vertex_attributes: most,
+        max_vertex_buffer_array_stride: most,
+        min_uniform_buffer_offset_alignment: 1,
+        min_storage_buffer_offset_alignment: 1,
+        max_inter_stage_shader_components: most,
+        max_color_attachments: most,
+        max_color_attachment_bytes_per_sample: most,
+        max_compute_workgroup_storage_size: most,
+        max_compute_invocations_per_workgroup: most,
+        max_compute_workgroup_size_x: most,
+        max_compute_workgroup_size_y: most,
+        max_compute_workgroup_size_z: most,
+        max_compute_workgroups_per_dimension: most,
+        min_subgroup_size: 0,
+        max_subgroup_size: most,
+        max_push_constant_size: most,
+        max_non_sampler_bindings: most,
+        max_task_workgroup_total_count: most,
+        max_task_workgroups_per_dimension: most,
+        max_mesh_output_layers: most,
+        max_mesh_multiview_count: most,
+        max_blas_primitive_count: most,
+        max_blas_geometry_count: most,
+        max_tlas_instance_count: most,
+        max_acceleration_structures_per_shader_stage: most,
+    }
 }
