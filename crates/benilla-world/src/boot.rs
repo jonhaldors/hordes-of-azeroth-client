@@ -93,7 +93,10 @@ fn has_adapter_besides_gl(backends: wgpu::Backends) -> bool {
         backends: others,
         ..default()
     });
-    !instance.enumerate_adapters(others).is_empty()
+    instance
+        .enumerate_adapters(others)
+        .iter()
+        .any(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu)
 }
 
 fn gl_limits() -> wgpu::Limits {
