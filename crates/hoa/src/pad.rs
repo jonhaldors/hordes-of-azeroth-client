@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
@@ -41,6 +42,9 @@ const BUTTON_MAP: [(GamepadButton, u32); 15] = [
 const SONY_VENDOR: u16 = 0x054C;
 const VALVE_VENDOR: u16 = 0x28DE;
 const STEAM_DECK_PRODUCT: u16 = 0x1205;
+const THREEDCONNEXION_VENDOR: u16 = 0x256F;
+const LOGITECH_VENDOR: u16 = 0x046D;
+const LOGITECH_SPACE_MICE: std::ops::RangeInclusive<u16> = 0xC600..=0xC6FF;
 static ON_STEAM_DECK: LazyLock<bool> = LazyLock::new(|| std::env::var("SteamDeck").is_ok_and(|v| v == "1"));
 pub const TRIGGER_PRESSED: f32 = 0.45;
 const ACTIVITY: f32 = 0.35;
@@ -66,6 +70,20 @@ impl PadState {
                 .any(|v| v.abs() > ACTIVITY)
             || self.lt > TRIGGER_PRESSED
             || self.rt > TRIGGER_PRESSED
+    }
+
+    pub fn moved_from(&self, rest: &PadState) -> bool {
+        self.buttons & !rest.buttons != 0
+            || [
+                self.lx - rest.lx,
+                self.ly - rest.ly,
+                self.rx - rest.rx,
+                self.ry - rest.ry,
+                self.lt - rest.lt,
+                self.rt - rest.rt,
+            ]
+            .iter()
+            .any(|v| v.abs() > ACTIVITY)
     }
 
     pub fn with_trigger_buttons(mut self) -> Self {
@@ -366,15 +384,55 @@ pub fn log_new_pads(pads: Query<(&Gamepad, Option<&Name>), Added<Gamepad>>) {
     }
 }
 
+fn is_space_mouse(vendor: Option<u16>, product: Option<u16>) -> bool {
+    match (vendor, product) {
+        (Some(THREEDCONNEXION_VENDOR), _) => true,
+        (Some(LOGITECH_VENDOR), Some(product)) => LOGITECH_SPACE_MICE.contains(&product),
+        _ => false,
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct PadRest {
+    rest: PadState,
+    woken: bool,
+}
+
+impl PadRest {
+    fn first(read: PadState) -> Self {
+        Self {
+            rest: read,
+            woken: false,
+        }
+    }
+
+    fn wakes(&mut self, read: &PadState) -> bool {
+        if !self.woken {
+            self.woken = read.moved_from(&self.rest);
+            self.rest.buttons &= read.buttons;
+        }
+        self.woken
+    }
+}
+
 pub fn poll_pads(
     time: Res<Time<Real>>,
-    pads: Query<&Gamepad>,
+    pads: Query<(Entity, &Gamepad)>,
     shared: NonSend<SharedController>,
     mut steer: ResMut<PadSteer>,
+    mut rests: Local<HashMap<Entity, PadRest>>,
 ) {
+    rests.retain(|entity, _| pads.contains(*entity));
     let mut chosen: Option<(PadState, PadKind)> = None;
-    for pad in &pads {
+    for (entity, pad) in &pads {
+        if is_space_mouse(pad.vendor_id(), pad.product_id()) {
+            continue;
+        }
         let read = read_gamepad(pad);
+        let rest = rests.entry(entity).or_insert_with(|| PadRest::first(read.0));
+        if !rest.wakes(&read.0) {
+            continue;
+        }
         let active = read.0.with_trigger_buttons().is_active();
         if chosen.is_none() || active {
             chosen = Some(read);
@@ -402,6 +460,47 @@ mod tests {
         assert_eq!(virtual_pad_on_desktop, PadKind::Xbox);
         assert_eq!(PadKind::of_device(Some(SONY_VENDOR), None, true), PadKind::PlayStation);
         assert_eq!(PadKind::SteamDeck.name(), Some("deck"));
+    }
+
+    #[test]
+    fn space_mice_are_not_pads() {
+        assert!(is_space_mouse(Some(THREEDCONNEXION_VENDOR), Some(0xC652)));
+        assert!(is_space_mouse(Some(LOGITECH_VENDOR), Some(0xC626)));
+        assert!(!is_space_mouse(Some(LOGITECH_VENDOR), Some(0xC21D)));
+        assert!(!is_space_mouse(Some(SONY_VENDOR), Some(0x09CC)));
+        assert!(!is_space_mouse(None, None));
+    }
+
+    #[test]
+    fn a_device_resting_off_centre_wakes_only_when_it_moves() {
+        let resting = PadState {
+            lt: -1.0,
+            ry: 0.8,
+            buttons: BUTTON_X,
+            ..Default::default()
+        };
+        let mut rest = PadRest::first(resting);
+        assert!(!rest.wakes(&resting));
+        let released = PadState {
+            buttons: 0,
+            ..resting
+        };
+        assert!(!rest.wakes(&released));
+        assert!(rest.wakes(&PadState {
+            buttons: BUTTON_X,
+            ..resting
+        }));
+    }
+
+    #[test]
+    fn a_real_pad_wakes_on_its_first_press() {
+        let mut rest = PadRest::first(PadState::default());
+        assert!(!rest.wakes(&PadState::default()));
+        assert!(rest.wakes(&PadState {
+            lx: 0.5,
+            ..Default::default()
+        }));
+        assert!(rest.wakes(&PadState::default()));
     }
 
     #[test]
