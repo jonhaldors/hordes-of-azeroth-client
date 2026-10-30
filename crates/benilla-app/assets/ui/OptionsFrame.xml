@@ -571,6 +571,7 @@
             end
             SetCVar(row.cvar, value, row.cvarEvent)
             BenillaOptionsRow_WritePartner(row, value)
+            if row.restartsGx then RestartGx() end
         end
 
         -- UIOptionsFrame_Save's partner writes: Pet Melee Damage also writes PetSpellDamage
@@ -666,14 +667,14 @@
             local dd = UIDropDownMenu_GetCurrentDropDown()
             local row = dd:GetParent()
             BenillaOptionsRow_Set(row, this.value)
-            BenillaOptionsDropdown_ShowValue(row)
+            BenillaOptionsDropdown_ShowValue(row, this.value)
         end
 
         -- A field, not SetSelectedValue, whose Refresh walks the shared DropDownList1. An off-grid
         -- value shows the nearest entry.
-        function BenillaOptionsDropdown_ShowValue(row)
+        function BenillaOptionsDropdown_ShowValue(row, chosen)
             local dd = getglobal(row:GetName() .. "Dropdown")
-            local v = BenillaOptionsRow_Get(row)
+            local v = chosen or BenillaOptionsRow_Get(row)
             local match
             for _, e in ipairs(row.entries) do
                 -- `alt`: a stored "3" shows as Never, where the nearest value would show Always.
@@ -1985,6 +1986,7 @@
                                                 -- gxWindow "0" is the borderless window.
                                                 BenillaOptionsRow_OnLoad(this, "gxWindow", "Display Mode",
                                                     "BENILLA_TOOLTIP_DISPLAY_MODE")
+                                                this.restartsGx = 1
                                                 BenillaOptionsDropdownRow_Setup(this, {
                                                     { text = "Windowed (Fullscreen)", value = "0" },
                                                     { text = "Windowed", value = "1" },

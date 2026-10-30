@@ -1118,6 +1118,7 @@ fn the_display_mode_dropdown_maps_its_entries_to_the_gx_window_polarity() {
         s.take_cvar_changes().is_empty(),
         "reading the table on select must not write it back"
     );
+    assert_eq!(s.take_restart_gx_asks(), 0);
 
     // Two entries: there is no exclusive fullscreen, as in modern Classic.
     s.run(&format!("{ROW}DropdownButton:Click()")).unwrap();
@@ -1134,6 +1135,11 @@ fn the_display_mode_dropdown_maps_its_entries_to_the_gx_window_polarity() {
     assert_eq!(
         s.take_cvar_changes(),
         vec![("gxWindow".to_string(), "1".to_string())]
+    );
+    assert_eq!(
+        s.take_restart_gx_asks(),
+        1,
+        "a latched gxWindow pick applies only through RestartGx"
     );
     assert_eq!(
         s.eval::<String>(&format!("return {ROW}DropdownText:GetText()"))
