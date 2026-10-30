@@ -14,7 +14,7 @@ use crate::server_draw::{MarkSpec, Shape, TELEGRAPH_KEY_PREFIX};
 
 const LINE_HALF_WIDTH: f32 = 1.5;
 const SHORTEST_LINE_YARDS: f32 = 1.0;
-const LONGEST_LINE_YARDS: f32 = 36.0;
+const LONGEST_LINE_YARDS: f32 = 72.0;
 const CONE_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
 const RIM_YARDS: f32 = 0.3;
 const SMALLEST_REACH_YARDS: f32 = 4.0;
@@ -507,11 +507,11 @@ mod tests {
     }
 
     #[test]
-    fn a_line_is_as_long_as_sent_up_to_thirty_six_yards() {
+    fn a_line_is_as_long_as_sent_up_to_seventy_two_yards() {
         assert_eq!(line_length(0.5), 1.0);
         assert_eq!(line_length(10.0), 10.0);
-        assert_eq!(line_length(13.7), 13.7);
-        assert_eq!(line_length(80.0), 36.0);
+        assert_eq!(line_length(70.0), 70.0);
+        assert_eq!(line_length(80.0), 72.0);
     }
 
     #[test]
