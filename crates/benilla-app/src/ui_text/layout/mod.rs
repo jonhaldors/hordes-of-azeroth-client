@@ -294,7 +294,7 @@ fn layout_text_quads_inner(
                     color[3] *= gradient_alpha(char_index, start, length);
                 }
                 for g in &cc.glyphs {
-                    if let Some(info) = e.cell(r.face, r.ppem, r.bake, g.glyph_id) {
+                    if let Some(info) = e.glyph_cell(r.ppem, r.bake, g) {
                         pending.push(PendingGlyph {
                             x_dev: pen_dev + info.bearing_x,
                             y_dev: g.y_off - info.bearing_top,

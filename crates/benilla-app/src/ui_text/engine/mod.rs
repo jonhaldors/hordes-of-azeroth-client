@@ -35,7 +35,9 @@ use cosmic_text::{
 
 use benilla_assets::WorldAssets;
 
-use faces::{charmap_glyph, hhea_ascent_ratio, register_font, unicode_charmap, CLIENT_FONTS};
+use faces::{
+    charmap_glyph, hhea_ascent_ratio, register_font, unicode_charmap, CLIENT_FONTS, FALLBACK_FONTS,
+};
 pub(crate) use gpu::{FontAtlasInit, UiTextPlugin};
 
 use super::outline::{mono_cell, outlined_cell, Bake};
@@ -137,6 +139,7 @@ pub(crate) struct TextEngine {
     /// loaded stays, as the client faces load once.
     loose_generation: u64,
     default_face: usize,
+    fallback_faces: Vec<usize>,
     /// The window's `scale_factor`. Every raster size derives from it ([`Self::ppem`]), so a
     /// change invalidates no cell, only the measures taken under the old value.
     dpi: f32,
@@ -215,7 +218,7 @@ impl TextEngine {
              device pixels",
             faces.len()
         );
-        Some(Self {
+        let mut engine = Self {
             font_system,
             swash: SwashCache::new(),
             faces,
@@ -224,6 +227,7 @@ impl TextEngine {
             missing_fonts: HashSet::new(),
             loose_generation: 0,
             default_face,
+            fallback_faces: Vec::new(),
             dpi,
             chars: HashMap::new(),
             cells: HashMap::new(),
@@ -234,7 +238,42 @@ impl TextEngine {
             substituted: HashSet::new(),
             over_ceiling: false,
             stats: CacheStats::default(),
-        })
+        };
+        engine.load_fallback_faces();
+        Some(engine)
+    }
+
+    fn load_fallback_faces(&mut self) {
+        for &path in FALLBACK_FONTS {
+            if let Some(face) = self.load_face(path, &path.to_ascii_lowercase()) {
+                self.fallback_faces.push(face);
+            }
+        }
+    }
+
+    fn face_with_glyph(&self, face: usize, ch: char) -> Option<usize> {
+        std::iter::once(face)
+            .chain(self.fallback_faces.iter().copied())
+            .find(|&candidate| self.maps_char(candidate, ch))
+    }
+
+    fn maps_char(&self, face: usize, ch: char) -> bool {
+        let Some(f) = self.faces.get(face) else {
+            return false;
+        };
+        let charmap = f.charmap;
+        self.font_system
+            .db()
+            .with_face_data(f.id, |data, index| charmap_glyph(data, index, charmap, ch))
+            .flatten()
+            .is_some()
+    }
+
+    fn sfnt_of(&self, font_id: fontdb::ID) -> Option<Arc<sfnt::Sfnt>> {
+        self.faces
+            .iter()
+            .find(|f| f.id == font_id)
+            .and_then(|f| f.sfnt.clone())
     }
 
     /// The face a font path resolves to, loading it on first use: `SetFont`, `<FontString font=>`
@@ -383,11 +422,8 @@ impl TextEngine {
             let Some(bake) = bake else { return };
             // The pen metrics are cached; the cells for this bake may not be.
             let glyphs = known.glyphs.clone();
-            let Some(id) = self.faces.get(face).map(|f| f.id) else {
-                return;
-            };
             for g in &glyphs {
-                self.ensure_cell(id, ppem, bake, g);
+                self.ensure_cell(ppem, bake, g);
             }
             return;
         }
@@ -398,24 +434,14 @@ impl TextEngine {
                 .insert((face, ppem, ch), CharCell { glyphs: Vec::new() });
             return;
         }
-        let Some(f) = self.faces.get(face) else {
+        if self.faces.get(face).is_none() {
             return;
-        };
-        let (face_id, family, weight, style, stretch) =
-            (f.id, f.family.clone(), f.weight, f.style, f.stretch);
+        }
         // The face's own charmap answers first, as `FT_Get_Char_Index` (`0x7ce960`) does ahead of
         // the load (`0x5d1154`): a code point it lacks fails the glyph (`0x5d1162`), so the lookup
         // `0x5cabd0` returns none and the line builder skips the character with no quad and no
         // step (`0x5cced6`). The shaper would draw the face's `.notdef` box in its place.
-        let charmap = f.charmap;
-        let mapped = self
-            .font_system
-            .db()
-            .with_face_data(face_id, |data, index| {
-                charmap_glyph(data, index, charmap, ch)
-            })
-            .flatten();
-        if mapped.is_none() {
+        let Some(shaping_face) = self.face_with_glyph(face, ch) else {
             if self.complained.insert(ch) {
                 info!(
                     "ui_text: {} has no glyph for {ch:?}; it draws nothing",
@@ -425,7 +451,12 @@ impl TextEngine {
             self.chars
                 .insert((face, ppem, ch), CharCell { glyphs: Vec::new() });
             return;
-        }
+        };
+        let Some(f) = self.faces.get(shaping_face) else {
+            return;
+        };
+        let (face_id, family, weight, style, stretch) =
+            (f.id, f.family.clone(), f.weight, f.style, f.stretch);
         let attrs = Attrs::new()
             .family(Family::Name(&family))
             .weight(weight)
@@ -464,13 +495,13 @@ impl TextEngine {
         // Naming a face to `cosmic-text` is a query that takes the first face able to draw the
         // character, so an unmatched family draws and measures in another face: warned once.
         if let Some(got) = shaped_by.filter(|&got| got != face_id) {
-            if self.substituted.insert(face) {
+            if self.substituted.insert(shaping_face) {
                 let got_name = self
                     .font_system
                     .db()
                     .face(got)
                     .map_or_else(|| format!("{got:?}"), |i| i.post_script_name.clone());
-                let want = self.faces.get(face).map_or("?", |f| f.path.as_str());
+                let want = self.faces.get(shaping_face).map_or("?", |f| f.path.as_str());
                 warn!(
                     "ui_text: '{want}' loaded as family {family:?} (weight {}, style {style:?}) \
                      but {ch:?} shaped in {got_name} instead — text in this face draws and \
@@ -491,7 +522,7 @@ impl TextEngine {
         self.stats.chars_shaped += 1;
         // The metrics off the face's own tables, as FreeType computes them; a glyph another face
         // shaped keeps the shaper's advance and reads its ink off the outline.
-        let sfnt = self.faces.get(face).and_then(|f| f.sfnt.clone());
+        let sfnt = self.sfnt_of(face_id);
         for g in &mut glyphs {
             let own = sfnt
                 .as_deref()
@@ -505,7 +536,7 @@ impl TextEngine {
         if let Some(bake) = bake {
             for g in &glyphs {
                 let g = *g;
-                self.ensure_cell(face_id, ppem, bake, &g);
+                self.ensure_cell(ppem, bake, &g);
             }
         }
         self.chars.insert((face, ppem, ch), CharCell { glyphs });
@@ -556,8 +587,8 @@ impl TextEngine {
     /// Its top sits `pad` rows over FreeType's `bitmap_top`, which the reference's vertical seat
     /// (`0x5d1360`) hangs from the ascender, so the ink keeps the bitmap's own row. Only the
     /// raster's first `ppem` rows are baked ([`em_rows`]), before any ring, and they keep their rows.
-    fn ensure_cell(&mut self, face_id: fontdb::ID, ppem: u16, bake: Bake, g: &GlyphRef) {
-        let key: GlyphKey = (face_id, g.glyph_id, ppem, bake);
+    fn ensure_cell(&mut self, ppem: u16, bake: Bake, g: &GlyphRef) {
+        let key: GlyphKey = (g.key.font_id, g.glyph_id, ppem, bake);
         if self.cells.contains_key(&key) {
             return;
         }
@@ -672,6 +703,7 @@ impl TextEngine {
     }
 
     /// One glyph's cell; `None` for a zero-ink glyph, and for one frame after the sheet fills.
+    #[cfg(test)]
     pub(super) fn cell(
         &self,
         face: usize,
@@ -679,9 +711,17 @@ impl TextEngine {
         bake: Bake,
         glyph_id: u16,
     ) -> Option<GlyphInfo> {
-        let id = self.faces.get(face)?.id;
+        let family = &self.faces.get(face)?.family;
+        self.faces
+            .iter()
+            .filter(|f| &f.family == family)
+            .find_map(|f| self.cells.get(&(f.id, glyph_id, ppem, bake)).copied())
+            .flatten()
+    }
+
+    pub(super) fn glyph_cell(&self, ppem: u16, bake: Bake, g: &GlyphRef) -> Option<GlyphInfo> {
         self.cells
-            .get(&(id, glyph_id, ppem, bake))
+            .get(&(g.key.font_id, g.glyph_id, ppem, bake))
             .copied()
             .flatten()
     }
@@ -787,6 +827,7 @@ pub(super) fn test_engine(dpi: f32) -> Option<TextEngine> {
         missing_fonts: HashSet::new(),
         loose_generation: 0,
         default_face,
+        fallback_faces: Vec::new(),
         dpi,
         chars: HashMap::new(),
         cells: HashMap::new(),
@@ -1475,6 +1516,39 @@ mod ppem_tests {
                 "Interface\\Addons\\MikScrollingBattleText\\Fonts\\nope.ttf"
             ))
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_character_friz_lacks_draws_in_the_fallback_face() {
+        let Some(mut e) = engine_or_skip() else {
+            return;
+        };
+        let font = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../Interface/AddOns/HordesOfAzeroth/Fonts/NotoSansSC-Regular.otf");
+        if !font.exists() {
+            eprintln!("skipping: no NotoSansSC-Regular.otf beside the client");
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("benilla-fallback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let fonts = root.join("HordesOfAzeroth").join("Fonts");
+        std::fs::create_dir_all(&fonts).unwrap();
+        std::fs::copy(&font, fonts.join("NotoSansSC-Regular.otf")).unwrap();
+        e.source.as_mut().unwrap().loose.addons = Some(root.clone());
+        e.load_fallback_faces();
+        assert_eq!(e.fallback_faces.len(), 1, "the bundled CJK face loads");
+
+        let friz = e.face_for(None);
+        let ppem = e.ppem(14.0);
+        e.ensure_str(friz, ppem, Bake::ring(0), "A中");
+        let latin = e.char_cell(friz, ppem, 'A').expect("shaped").glyphs[0];
+        let han = e.char_cell(friz, ppem, '中').expect("shaped").glyphs[0];
+        let friz_id = e.faces[friz].id;
+        assert_eq!(latin.key.font_id, friz_id, "Latin stays in Friz");
+        assert_ne!(han.key.font_id, friz_id, "a Han character comes from the fallback");
+        assert!(han.px > 0.0, "the fallback glyph advances the pen");
+        assert!(e.glyph_cell(ppem, Bake::ring(0), &han).is_some(), "the fallback glyph has ink");
         let _ = std::fs::remove_dir_all(&root);
     }
 
