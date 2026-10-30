@@ -139,6 +139,11 @@ impl UiScript {
         self.run(chunk)
     }
 
+    pub fn with_binding_event<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _event = protected::raise(self.lua(), Event::Binding);
+        f()
+    }
+
     /// `CBindings::ExecuteBinding` (`0x4b7990`) once the chord has resolved to `command`: its
     /// `RunCommand` (`0x4b7b50`) with the hardware-event gate raised (`0x4b7b02`), a press when
     /// `down`, else the release, which runs only a `runOnUp` body. `Ok(false)` when nothing ran:

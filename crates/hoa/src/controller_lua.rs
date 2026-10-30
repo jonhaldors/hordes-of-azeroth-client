@@ -139,14 +139,19 @@ pub fn deliver_pad_events(world: &mut World) {
         };
         for event in events {
             let lua = script.lua();
-            let (name, args) = match event {
+            match event {
                 PadEvent::Button { name, down } => {
-                    ("HoAController_OnButton", lua.pack_multi((name, down)))
+                    if let Ok(args) = lua.pack_multi((name, down)) {
+                        script.with_binding_event(|| {
+                            call_global(script, "HoAController_OnButton", args)
+                        });
+                    }
                 }
-                PadEvent::Device(kind) => ("HoAController_OnDevice", lua.pack_multi(kind)),
-            };
-            if let Ok(args) = args {
-                call_global(script, name, args);
+                PadEvent::Device(kind) => {
+                    if let Ok(args) = lua.pack_multi(kind) {
+                        call_global(script, "HoAController_OnDevice", args);
+                    }
+                }
             }
         }
     });
