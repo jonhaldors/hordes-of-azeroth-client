@@ -1,5 +1,6 @@
 mod census;
 mod controller_lua;
+mod coop_lua;
 mod cursor;
 mod interact;
 mod interact_lua;

@@ -3,6 +3,7 @@ use benilla_ui::script::{UiScript, VmKind};
 use bevy::prelude::*;
 
 use crate::controller_lua::register_controller_api;
+use crate::coop_lua::register_coop_api;
 use crate::interact::SharedInteract;
 use crate::interact_lua::register_interact;
 use crate::keys::{register_keys_api, SharedTyping};
@@ -33,7 +34,8 @@ impl LuaHosts {
                 .and_then(|()| register_unit_api(lua, &self.snapshot, &self.plates))
                 .and_then(|()| register_keys_api(lua, &self.typing)),
         }
-        .and_then(|()| register_controller_api(lua, &self.controller));
+        .and_then(|()| register_controller_api(lua, &self.controller))
+        .and_then(|()| register_coop_api(lua));
         if let Err(error) = seeded {
             warn!("Hordes of Azeroth: Lua functions not installed: {error}");
         }
