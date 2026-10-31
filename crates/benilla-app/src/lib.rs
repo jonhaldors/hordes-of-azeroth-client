@@ -237,6 +237,10 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     local_state::home()
 }
 
+pub fn set_character_alias(home_name: Option<String>) {
+    local_state::set_character_alias(home_name);
+}
+
 /// What a crate on top of benilla adds to the built app ([`run_with`]).
 type Extension<'a> = Box<dyn FnOnce(&mut App) + 'a>;
 

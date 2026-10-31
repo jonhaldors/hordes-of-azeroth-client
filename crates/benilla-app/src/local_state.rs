@@ -314,6 +314,8 @@ impl CharacterFile {
 /// `benilla-config/<kind>/<realm>-<character>[.txt]`, the one place a per-character path is made.
 fn character_path(file: CharacterFile, realm: &str, character: &str) -> Option<PathBuf> {
     let (dir, suffix) = file.place();
+    let alias = character_alias();
+    let character = alias.as_deref().unwrap_or(character);
     let key = format!("{}-{}{suffix}", file_token(realm), file_token(character));
     Some(home()?.join(dir).join(key))
 }
@@ -323,6 +325,21 @@ fn character_path(file: CharacterFile, realm: &str, character: &str) -> Option<P
 /// `0x4726f0` for the older `WTF\Account\<account>\<name>`). The reference's folder moves
 /// whole or not at all: a move onto a name that exists fails and leaves everything under the old
 /// name. So when the new name has any per-character file or folder, nothing moves.
+static CHARACTER_ALIAS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub(crate) fn set_character_alias(home_name: Option<String>) {
+    *CHARACTER_ALIAS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = home_name.filter(|name| !name.is_empty());
+}
+
+fn character_alias() -> Option<String> {
+    CHARACTER_ALIAS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
 pub(crate) fn move_character_state(realm: &str, old: &str, new: &str) {
     let pairs: Option<Vec<(PathBuf, PathBuf)>> = CharacterFile::ALL
         .iter()

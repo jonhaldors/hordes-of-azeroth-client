@@ -27,7 +27,7 @@ pub fn register_coop_api(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "HoaCoop_SetGate",
         lua.create_function(
-            |_, (address, token, user, password): (Option<String>, Option<String>, Option<String>, Option<String>)| {
+            |_, (address, token, user, password, character): (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)| {
                 let joined = match (address, token, user, password) {
                     (Some(address), Some(token), Some(user), Some(password))
                         if !address.is_empty() && !token.is_empty() =>
@@ -37,6 +37,7 @@ pub fn register_coop_api(lua: &Lua) -> LuaResult<()> {
                     _ => None,
                 };
                 set_gate(joined.as_ref().map(|(gate, _, _)| gate.clone()));
+                benilla_app::set_character_alias(joined.as_ref().and(character));
                 *JOINED_LOGIN.lock().unwrap_or_else(PoisonError::into_inner) =
                     joined.map(|(_, user, password)| (user, password));
                 Ok(())
