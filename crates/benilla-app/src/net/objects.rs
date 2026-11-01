@@ -475,7 +475,7 @@ fn on_speed(In(ev): In<SessionEvent>, mut sc: Scene) {
             &mut sc.speed_changes,
         ),
         SessionEvent::SpeedChanged { guid, kind, speed } => {
-            speed_changed(guid, kind, speed, &sc.index, &mut sc.speeds)
+            speed_changed(guid, kind, speed, &sc.index, &mut sc.remote, &mut sc.speeds)
         }
         _ => {}
     }
@@ -791,7 +791,11 @@ fn unit_move(
                 apply_move(e, &mv, &mut rm, now_ms, commands, landings);
             } else {
                 // Fire-times are monotone per unit, so the queue stays ordered.
-                rm.pending.push_back(PendingMove { fire_ms, mv });
+                rm.pending.push_back(PendingMove {
+                    fire_ms,
+                    mv,
+                    speed: None,
+                });
             }
         } else {
             // The first move seeds the chain and applies at arrival; the insert is deferred, so
@@ -804,6 +808,7 @@ fn unit_move(
                 speed: 0.0,
                 vertical_velocity: 0.0,
                 jump_xy_vel: [0.0; 2],
+                air_dash_left: 0.0,
                 fall_start: None,
                 pending: std::collections::VecDeque::new(),
                 relay: Default::default(),
@@ -1100,7 +1105,11 @@ fn set_speed(
     let Some(mut s) = index.0.get(&guid).and_then(|&e| speeds.get_mut(e).ok()) else {
         return false;
     };
-    let s = &mut s.0;
+    write_speed(&mut s.0, kind, speed);
+    true
+}
+
+pub(in crate::net) fn write_speed(s: &mut MoveSpeeds, kind: SpeedKind, speed: f32) {
     match kind {
         SpeedKind::Walk => s.walk = speed,
         SpeedKind::Run => s.run = speed,
@@ -1109,7 +1118,6 @@ fn set_speed(
         SpeedKind::SwimBack => s.swim_back = speed,
         SpeedKind::TurnRate => s.turn_rate = speed,
     }
-    true
 }
 
 /// `SMSG_FORCE_*_SPEED_CHANGE`: applied to the mover's speeds, and for our own guid forwarded to
@@ -1153,8 +1161,15 @@ fn speed_changed(
     kind: SpeedKind,
     speed: f32,
     index: &GuidIndex,
+    remote: &mut Query<&mut RemoteMotion>,
     speeds: &mut Query<&mut UnitSpeeds>,
 ) {
+    if let Some(mut rm) = index.0.get(&guid).and_then(|&e| remote.get_mut(e).ok()) {
+        if let Some(last) = rm.pending.back_mut() {
+            last.speed = Some((kind, speed));
+            return;
+        }
+    }
     if !set_speed(guid, kind, speed, index, speeds) {
         // A speed broadcast can outrun the create block, which carries the same set.
         debug!("net: {kind:?} speed change for untracked mover {guid:#x} — nothing to write");
@@ -2496,6 +2511,7 @@ mod tests {
                 speed: 7.0,
                 vertical_velocity: 0.0,
                 jump_xy_vel: [0.0; 2],
+                air_dash_left: 0.0,
                 fall_start: None,
                 relay: Default::default(),
                 last_apply_ms: 0.0,

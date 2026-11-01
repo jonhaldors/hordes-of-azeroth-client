@@ -836,7 +836,11 @@ fn replay_frames(script: &[(u32, f64, u32)]) -> (Vec<u32>, u32) {
         if rm.fires_at_arrival(fire_ms, now) {
             apply(&mut rm, &mv, &mut applied);
         } else {
-            rm.pending.push_back(PendingMove { fire_ms, mv });
+            rm.pending.push_back(PendingMove {
+                fire_ms,
+                mv,
+                speed: None,
+            });
         }
         while rm.pending.front().is_some_and(|p| p.fire_ms <= now) {
             let ev = rm.pending.pop_front().expect("front checked");

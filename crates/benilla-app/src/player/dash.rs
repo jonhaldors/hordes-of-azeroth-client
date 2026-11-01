@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use super::input::MoveAxes;
 
 const DASH_SPEED_MIN: f32 = 20.0;
-const AIR_DASH_SECS: f32 = 0.2;
+pub(crate) const AIR_DASH_SECS: f32 = 0.2;
 const STANDING_DASH_GIVE_UP_SECS: f32 = 0.6;
 const DASH_FOV_KICK: f32 = 0.08;
 const DASH_FOV_RISE_SECS: f32 = 0.06;
@@ -42,7 +42,7 @@ pub(super) fn held_still(speeds: Option<MoveSpeeds>) -> bool {
     speeds.is_some_and(|s| s.walk == 0.0 && s.run == 0.0)
 }
 
-pub(super) fn capped_horizontal(velocity: Vec3, cap: f32) -> Vec3 {
+pub(crate) fn capped_horizontal(velocity: Vec3, cap: f32) -> Vec3 {
     let speed = velocity.length();
     if cap > 0.0 && speed > cap {
         velocity * (cap / speed)
@@ -59,7 +59,7 @@ fn fov_kick_scale(elapsed: f32) -> f32 {
     1.0 + DASH_FOV_KICK * (1.0 - falling) * (1.0 - falling)
 }
 
-fn is_dash_speed(run: f32) -> bool {
+pub(crate) fn is_dash_speed(run: f32) -> bool {
     run >= DASH_SPEED_MIN
 }
 

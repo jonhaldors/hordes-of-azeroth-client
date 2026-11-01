@@ -1656,6 +1656,7 @@ mod server_moved_players {
             speed: 7.0,
             vertical_velocity: 0.0,
             jump_xy_vel: [0.0; 2],
+            air_dash_left: 0.0,
             fall_start: None,
             pending: std::collections::VecDeque::new(),
             relay: Default::default(),

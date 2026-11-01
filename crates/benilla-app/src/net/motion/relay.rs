@@ -7,7 +7,7 @@
 //! offset from arrival stays in `[-500, +1000]` ms. The state is five cells on the unit's
 //! `CMovement`: `+0xa8`, `+0xac`, `+0xbc[32]`, `+0x13c`, `+0x140`.
 
-use benilla_protocol::{JumpInfo, RelayVerb, TransportPose};
+use benilla_protocol::{JumpInfo, RelayVerb, SpeedKind, TransportPose};
 
 /// One relayed move as it came off the wire, before [`RelayChain`] schedules it.
 #[derive(Clone)]
@@ -41,6 +41,7 @@ pub(crate) struct PendingMove {
     /// On the real-time ms clock.
     pub(crate) fire_ms: f64,
     pub(crate) mv: RelayMove,
+    pub(crate) speed: Option<(SpeedKind, f32)>,
 }
 
 /// The skew clamp (`@0x618d0d`, `@0x618d49`: `skew + 0x1f4` saturated into `[0, 0x5dc]`).

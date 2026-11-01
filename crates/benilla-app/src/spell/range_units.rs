@@ -239,6 +239,7 @@ mod tests {
             speed: 0.0,
             vertical_velocity: 0.0,
             jump_xy_vel: [0.0; 2],
+            air_dash_left: 0.0,
             fall_start: None,
             pending: Default::default(),
             relay: Default::default(),
