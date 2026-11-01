@@ -922,6 +922,7 @@ pub(super) fn control(
                 // The air nudge speed is `min(walk, run)`, live (`0x7c4c90(1)`, `0x7c4d19`), with
                 // the default walk speed until the server sends speeds.
                 mover_speeds.map_or(super::AIR_NUDGE_SPEED, |s| s.walk.min(s.run)),
+                mover::is_chair_seat(stand_state),
             )
         };
 

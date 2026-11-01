@@ -57,6 +57,10 @@ pub(super) struct Outcome {
     pub gated: bool,
 }
 
+pub(super) fn is_chair_seat(stand_state: u8) -> bool {
+    matches!(stand_state, 2 | 4 | 5 | 6)
+}
+
 /// Advance the player mover one frame, writing its position and velocities.
 pub(super) fn step(
     player: &mut Player,
@@ -71,6 +75,7 @@ pub(super) fn step(
     knockback: Option<Vec3>,
     water_floor: Option<f32>,
     nudge_speed: f32,
+    in_chair: bool,
 ) -> Outcome {
     let dt = time.delta_secs();
     let input_horiz = if moving {
@@ -93,7 +98,8 @@ pub(super) fn step(
     // clock kept. A knockback is a command ahead of the loop, so it is flown and gated below; the
     // settle hold and a root run no substep (`0x634100`). The air nudge is a command too
     // (`0x7c6afc`), so it shapes the box and takes effect in the hang.
-    if player.airborne_prev && knockback.is_none() && !player.settling && !player.modes.rooted {
+    let chair_hold = in_chair && !moving && knockback.is_none();
+    if player.airborne_prev && knockback.is_none() && !player.settling && !chair_hold && !player.modes.rooted {
         let nudge = (moving && !player.arc_dirs_set).then(|| dir.normalize_or_zero() * nudge_speed);
         let (_, mean_vy) = fall_step(player.vel_y, dt, terminal);
         let sweep = super::edge::Sweep::Fall {
@@ -145,7 +151,7 @@ pub(super) fn step(
     // The settle hold after a teleport or login: the world streams in over several frames, so the
     // body is frozen with gravity off. The terrain streamer releases it on the destination's
     // residency, never on ground contact, which a flyer or a swimmer never makes.
-    let held = player.settling;
+    let held = player.settling || chair_hold;
     // Rooted, nothing moves the body: `SetRoot` (`0x7c7340`) clears FALLING (`0x7c6290`) and the
     // direction bits, so the dispatcher (`0x634040`) skips the fall integrator (`0x635b00`) and the
     // walk resolver returns on a step under `2^-20`. A root caught mid-air hangs until `ClearRoot`
