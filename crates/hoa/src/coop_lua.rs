@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -12,6 +13,40 @@ const ANSWER_TIMEOUT: Duration = Duration::from_millis(1500);
 const ANSWER_LIMIT: u64 = 256 * 1024;
 
 static JOINED_LOGIN: Mutex<Option<(String, String)>> = Mutex::new(None);
+static BACKGROUND_CALLS: Mutex<Option<HashMap<u32, Option<Result<String, String>>>>> = Mutex::new(None);
+static NEXT_CALL_ID: Mutex<u32> = Mutex::new(0);
+
+fn start_background_call(method: String, path: String, body: String) -> u32 {
+    let id = {
+        let mut next = NEXT_CALL_ID.lock().unwrap_or_else(PoisonError::into_inner);
+        *next = next.wrapping_add(1);
+        *next
+    };
+    BACKGROUND_CALLS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get_or_insert_with(HashMap::new)
+        .insert(id, None);
+    std::thread::spawn(move || {
+        let answer = call_agent(&method, &path, &body);
+        if let Some(calls) = BACKGROUND_CALLS.lock().unwrap_or_else(PoisonError::into_inner).as_mut() {
+            if let Some(slot) = calls.get_mut(&id) {
+                *slot = Some(answer);
+            }
+        }
+    });
+    id
+}
+
+fn take_background_call(id: u32) -> Option<Result<String, String>> {
+    let mut guard = BACKGROUND_CALLS.lock().unwrap_or_else(PoisonError::into_inner);
+    let calls = guard.as_mut()?;
+    match calls.get(&id) {
+        Some(Some(_)) => calls.remove(&id).flatten(),
+        Some(None) => None,
+        None => Some(Err("Unknown call.".to_string())),
+    }
+}
 
 pub fn register_coop_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
@@ -21,6 +56,22 @@ pub fn register_coop_api(lua: &Lua) -> LuaResult<()> {
             Ok(match call_agent(&method, &path, body.as_deref().unwrap_or("")) {
                 Ok(answer) => (Some(answer), None),
                 Err(error) => (None, Some(error)),
+            })
+        })?,
+    )?;
+    globals.set(
+        "HoaCoop_Start",
+        lua.create_function(|_, (method, path, body): (String, String, Option<String>)| {
+            Ok(start_background_call(method, path, body.unwrap_or_default()))
+        })?,
+    )?;
+    globals.set(
+        "HoaCoop_Take",
+        lua.create_function(|_, id: u32| {
+            Ok(match take_background_call(id) {
+                None => (true, None, None),
+                Some(Ok(answer)) => (false, Some(answer), None),
+                Some(Err(error)) => (false, None, Some(error)),
             })
         })?,
     )?;
