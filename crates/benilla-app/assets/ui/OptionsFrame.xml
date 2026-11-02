@@ -447,6 +447,13 @@
             .. "There is no exclusive fullscreen mode. WoW itself removed one in 8.0.1, and "
             .. "modern Classic offers these same two."
 
+        -- 1.12's resolution text describes exclusive fullscreen.
+        BENILLA_TOOLTIP_RESOLUTION =
+            "Automatic fills your screen at its own resolution.\n\n"
+            .. "Pick a size to run the game in a window of that size instead. On Steam Deck and "
+            .. "other handhelds the window is stretched to fill the screen. To keep fullscreen "
+            .. "and only draw the 3D world at a lower or higher resolution, use Render Scale."
+
         -- 1.12's GAMMA text points at gray-bar art this page does not have.
         BENILLA_TOOLTIP_BRIGHTNESS =
             "Lightens or darkens the whole picture — nights, caves and interiors are what it is "
@@ -473,7 +480,7 @@
             Graphics = {
                 "RowUiScale", "RowFarclip", "RowWorldDetail", "RowSpellDetail", "RowBrightness",
                 "RowWeatherDensity",
-                "RowDisplayMode", "RowVerticalSync", "RowRenderScale",
+                "RowDisplayMode", "RowResolution", "RowVerticalSync", "RowRenderScale",
             },
             -- Guild Names and Player Titles are children of Player Names
             -- (UIOptionsFrame.lua:703-709).
@@ -533,11 +540,12 @@
         -- 1.12's `cvar`, `uvar` or `func`/`setFunc` (UIOptionsFrame.lua:230-377), all strings. Keep
         -- BenillaOptionsRow_HasStore in BenillaOptionsRow_Set's order.
         function BenillaOptionsRow_HasStore(row)
-            return row.uvar or row.setFunc or row.cvar
+            return row.uvar or row.setFunc or row.setValue or row.cvar
         end
 
         function BenillaOptionsRow_Get(row)
             if row.uvar then return getglobal(row.uvar) end
+            if row.getValue then return row.getValue() end
             if row.getFunc then
                 -- OptionsFrame.lua:110/135, formatted like the slider's write so strings compare
                 -- equal.
@@ -557,6 +565,10 @@
                 local apply = row.applyFunc
                 if type(apply) == "string" then apply = getglobal(apply) end
                 if apply then apply() end
+                return
+            end
+            if row.setValue then
+                row.setValue(value)
                 return
             end
             -- The "1"/"0" string, as UIOptionsFrame.lua:291-297.
@@ -590,6 +602,7 @@
         function BenillaOptionsRow_Default(row)
             if row.uvar then return row.udefault end
             if row.getFunc then return row.fdefault end
+            if row.defaultValue then return row.defaultValue() end
             return GetCVarDefault(row.cvar)
         end
 
@@ -668,6 +681,41 @@
             local row = dd:GetParent()
             BenillaOptionsRow_Set(row, this.value)
             BenillaOptionsDropdown_ShowValue(row, this.value)
+            if row.afterSet then row.afterSet() end
+        end
+
+        -- Automatic is the borderless fullscreen window at the screen's size; a size is a window
+        -- of that size, which gamescope stretches over the screen.
+        function BenillaOptionsResolutionRow_Get()
+            if GetCVar("gxWindow") == "1" then return GetCVar("gxResolution") end
+            return "auto"
+        end
+
+        function BenillaOptionsResolutionRow_Set(value)
+            if value == "auto" then
+                SetCVar("gxWindow", "0")
+            else
+                SetCVar("gxWindow", "1")
+                SetCVar("gxMaximize", "0")
+                SetCVar("gxResolution", value)
+            end
+            RestartGx()
+            local mode = BenillaOptionsFrameContainerBodyGraphicsRowDisplayMode
+            if mode and mode.entries then BenillaOptionsDropdown_ShowValue(mode) end
+        end
+
+        function BenillaOptionsResolutionRow_Default()
+            if GetCVarDefault("gxWindow") == "1" then return GetCVarDefault("gxResolution") end
+            return "auto"
+        end
+
+        function BenillaOptionsResolutionRow_Refresh(row)
+            local entries = { { text = "Automatic", value = "auto" } }
+            for _, size in ipairs({ GetScreenResolutions() }) do
+                table.insert(entries, { text = size, value = size })
+            end
+            row.entries = entries
+            BenillaOptionsDropdown_ShowValue(row)
         end
 
         -- A field, not SetSelectedValue, whose Refresh walks the shared DropDownList1. An off-grid
@@ -1991,12 +2039,35 @@
                                                     { text = "Windowed (Fullscreen)", value = "0" },
                                                     { text = "Windowed", value = "1" },
                                                 })
+                                                this.afterSet = function()
+                                                    BenillaOptionsResolutionRow_Refresh(
+                                                        BenillaOptionsFrameContainerBodyGraphicsRowResolution)
+                                                end
                                             </OnLoad></Scripts>
                                         </Frame>
-                                        <Frame name="$parentRowVerticalSync" inherits="BenillaOptionsCheckboxRowTemplate">
+                                        <Frame name="$parentRowResolution" inherits="BenillaOptionsDropdownRowTemplate">
                                             <Anchors>
                                                 <Anchor point="TOPLEFT" relativeTo="$parentRowDisplayMode" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
                                                 <Anchor point="TOPRIGHT" relativeTo="$parentRowDisplayMode" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                                            </Anchors>
+                                            <Scripts>
+                                                <OnLoad>
+                                                    BenillaOptionsRow_OnLoad(this, nil, "Resolution",
+                                                        "BENILLA_TOOLTIP_RESOLUTION")
+                                                    this.getValue = BenillaOptionsResolutionRow_Get
+                                                    this.setValue = BenillaOptionsResolutionRow_Set
+                                                    this.defaultValue = BenillaOptionsResolutionRow_Default
+                                                    BenillaOptionsDropdownRow_Setup(this, {})
+                                                </OnLoad>
+                                                <OnShow>
+                                                    BenillaOptionsResolutionRow_Refresh(this)
+                                                </OnShow>
+                                            </Scripts>
+                                        </Frame>
+                                        <Frame name="$parentRowVerticalSync" inherits="BenillaOptionsCheckboxRowTemplate">
+                                            <Anchors>
+                                                <Anchor point="TOPLEFT" relativeTo="$parentRowResolution" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                                                <Anchor point="TOPRIGHT" relativeTo="$parentRowResolution" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
                                             </Anchors>
                                             <Scripts><OnLoad>
                                                 -- Not deferred despite gxRestart: vsync changes
