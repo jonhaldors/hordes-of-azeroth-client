@@ -17,6 +17,10 @@ const SHORTEST_LINE_YARDS: f32 = 1.0;
 const LONGEST_LINE_YARDS: f32 = 72.0;
 const CONE_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
 const RING_INNER_SHARE: f32 = 0.3;
+const RING_SWEEP_ROWS: u32 = 32;
+const RING_SWEEP_REACH: f32 = 1.05;
+const RING_SPLIT_YARDS: f32 = 1.5;
+const RING_SPLIT_DEPTH: u32 = 16;
 const RIM_YARDS: f32 = 0.3;
 const SMALLEST_REACH_YARDS: f32 = 4.0;
 const REACH_PER_YARD_OF_SIZE: f32 = 0.6;
@@ -241,8 +245,53 @@ fn profile_height_at(profile: &[f32], distance: f32) -> f32 {
 fn fill_uv(shape: Shape, uv: [f32; 2], progress: f32) -> [f32; 2] {
     let p = progress.max(SMALLEST_FILL);
     match shape {
-        Shape::Circle | Shape::Cone | Shape::Ring => [0.5 + (uv[0] - 0.5) / p, 0.5 + (uv[1] - 0.5) / p],
+        Shape::Circle | Shape::Cone => [0.5 + (uv[0] - 0.5) / p, 0.5 + (uv[1] - 0.5) / p],
+        Shape::Ring => ring_sweep_uv(uv, progress),
         Shape::Line => [uv[0], 1.0 - (1.0 - uv[1]) / p],
+    }
+}
+
+fn ring_sweep_uv(uv: [f32; 2], progress: f32) -> [f32; 2] {
+    let radius_share = 2.0 * (uv[0] - 0.5).hypot(uv[1] - 0.5);
+    let row = 0.5 + progress.clamp(0.0, 1.0) * (RING_SWEEP_ROWS - 1) as f32;
+    [radius_share / RING_SWEEP_REACH, row / RING_SWEEP_ROWS as f32]
+}
+
+fn ring_sweep_alpha(size: f32, radius: f32, front: f32) -> f32 {
+    let inside = distance_inside(Shape::Ring, size, radius, 0.0);
+    if radius > front || inside <= 0.0 {
+        return 0.0;
+    }
+    FILL_WASH_ALPHA + (FILL_FRONT_ALPHA - FILL_WASH_ALPHA) * band(front - radius)
+}
+
+fn split_long_edges(verts: Vec<EffectVertex>, longest_uv: f32) -> Vec<EffectVertex> {
+    let mut out = Vec::with_capacity(verts.len());
+    for tri in verts.chunks_exact(3) {
+        split_triangle([tri[0], tri[1], tri[2]], longest_uv, RING_SPLIT_DEPTH, &mut out);
+    }
+    out
+}
+
+fn split_triangle(tri: [EffectVertex; 3], longest_uv: f32, depth: u32, out: &mut Vec<EffectVertex>) {
+    let edge = |a: &EffectVertex, b: &EffectVertex| (a.uv[0] - b.uv[0]).hypot(a.uv[1] - b.uv[1]);
+    let lengths = [edge(&tri[0], &tri[1]), edge(&tri[1], &tri[2]), edge(&tri[2], &tri[0])];
+    let (longest, length) = (0..3).map(|i| (i, lengths[i])).fold((0, 0.0), |best, next| if next.1 > best.1 { next } else { best });
+    if depth == 0 || length <= longest_uv {
+        out.extend_from_slice(&tri);
+        return;
+    }
+    let (a, b, c) = (tri[longest], tri[(longest + 1) % 3], tri[(longest + 2) % 3]);
+    let middle = midpoint(&a, &b);
+    split_triangle([a, middle, c], longest_uv, depth - 1, out);
+    split_triangle([middle, b, c], longest_uv, depth - 1, out);
+}
+
+fn midpoint(a: &EffectVertex, b: &EffectVertex) -> EffectVertex {
+    EffectVertex {
+        pos: std::array::from_fn(|i| (a.pos[i] + b.pos[i]) * 0.5),
+        uv: std::array::from_fn(|i| (a.uv[i] + b.uv[i]) * 0.5),
+        color: std::array::from_fn(|i| (a.color[i] + b.color[i]) * 0.5),
     }
 }
 
@@ -310,6 +359,10 @@ fn texel(key: TextureKey, size: f32, x: f32, z: f32) -> [u8; 4] {
             }
         }
     };
+    rgba(colour, alpha)
+}
+
+fn rgba(colour: [f32; 3], alpha: f32) -> [u8; 4] {
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     [byte(colour[0]), byte(colour[1]), byte(colour[2]), byte(alpha)]
 }
@@ -318,8 +371,42 @@ fn texture_pixels(yards: f32) -> u32 {
     ((yards * PIXELS_PER_YARD) as u32).clamp(MIN_TEXTURE_PIXELS, MAX_TEXTURE_PIXELS)
 }
 
+fn bake_ring_sweep(key: TextureKey, size: f32) -> Image {
+    let palette = PALETTES[usize::from(key.style).min(PALETTES.len() - 1)];
+    let reach = size * RING_SWEEP_REACH;
+    let width = texture_pixels(reach);
+    let mut data = Vec::with_capacity((width * RING_SWEEP_ROWS * 4) as usize);
+    for row in 0..RING_SWEEP_ROWS {
+        let front = size * row as f32 / (RING_SWEEP_ROWS - 1) as f32;
+        for column in 0..width {
+            let radius = reach * (column as f32 + 0.5) / width as f32;
+            data.extend_from_slice(&rgba(palette.wash, ring_sweep_alpha(size, radius, front)));
+        }
+    }
+    image_from(width, RING_SWEEP_ROWS, data)
+}
+
+fn image_from(width: u32, height: u32, data: Vec<u8>) -> Image {
+    let mut image = Image::new(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
+    image
+}
+
 fn bake(key: TextureKey) -> Image {
     let size = key.size_steps as f32 / TEXTURE_SIZE_STEPS_PER_YARD;
+    if key.shape == Shape::Ring && key.layer == Layer::Fill {
+        return bake_ring_sweep(key, size);
+    }
     let (min_x, max_x, min_z, max_z) = extents(key.shape, size);
     let (width, height) = (texture_pixels(max_x - min_x), texture_pixels(max_z - min_z));
     let mut data = Vec::with_capacity((width * height * 4) as usize);
@@ -334,19 +421,7 @@ fn bake(key: TextureKey) -> Image {
             data.extend_from_slice(&pixel);
         }
     }
-    let mut image = Image::new(
-        Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
-    image
+    image_from(width, height, data)
 }
 
 fn mpq_path(texture: &str) -> String {
@@ -433,6 +508,10 @@ pub fn project_telegraphs(mut telegraphs: ResMut<Telegraphs>, decals: WorldDecal
                 |p| reach_fade(p.y, reach),
                 |x, z| frame.rect_uv(x, z),
             );
+            if mark.spec.shape == Shape::Ring {
+                let longest_uv = RING_SPLIT_YARDS / (2.0 * drawn_size(&mark.spec));
+                mark.verts = split_long_edges(std::mem::take(&mut mark.verts), longest_uv);
+            }
         }
     }
 }
@@ -590,6 +669,33 @@ mod tests {
         assert!(distance_inside(Shape::Ring, 30.0, 8.0, 0.0) < 0.0);
         assert!(distance_inside(Shape::Ring, 30.0, 0.0, 20.0) > 0.0);
         assert!(distance_inside(Shape::Ring, 30.0, 31.0, 0.0) < 0.0);
+    }
+
+    #[test]
+    fn a_ring_fills_as_a_growing_disc_that_never_shows_in_the_hole() {
+        assert_eq!(ring_sweep_alpha(30.0, 5.0, 6.0), 0.0);
+        assert_eq!(ring_sweep_alpha(30.0, 5.0, 30.0), 0.0);
+        assert_eq!(ring_sweep_alpha(30.0, 20.0, 15.0), 0.0);
+        assert!(ring_sweep_alpha(30.0, 12.0, 20.0) > 0.0);
+        assert_eq!(ring_sweep_uv([0.5, 0.5], 0.0)[0], 0.0);
+        assert!((ring_sweep_uv([1.0, 0.5], 1.0)[0] - 1.0 / RING_SWEEP_REACH).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_wide_triangle_splits_until_every_edge_is_short() {
+        let corner = |u: f32, v: f32| EffectVertex {
+            pos: [u, 0.0, v],
+            uv: [u, v],
+            color: [1.0; 4],
+        };
+        let split = split_long_edges(vec![corner(0.0, 0.0), corner(1.0, 0.0), corner(0.0, 1.0)], 0.1);
+        assert_eq!(split.len() % 3, 0);
+        assert!(split.len() > 3);
+        for tri in split.chunks_exact(3) {
+            for (a, b) in [(0, 1), (1, 2), (2, 0)] {
+                assert!((tri[a].uv[0] - tri[b].uv[0]).hypot(tri[a].uv[1] - tri[b].uv[1]) <= 0.1 + 1e-5);
+            }
+        }
     }
 
     #[test]
