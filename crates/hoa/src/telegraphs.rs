@@ -17,7 +17,7 @@ const SHORTEST_LINE_YARDS: f32 = 1.0;
 const LONGEST_LINE_YARDS: f32 = 72.0;
 const CONE_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
 const RING_INNER_SHARE: f32 = 0.3;
-const RING_SWEEP_ROWS: u32 = 32;
+const RING_SWEEP_LEAD: f32 = 0.05;
 const RING_SWEEP_REACH: f32 = 1.05;
 const RING_SPLIT_YARDS: f32 = 1.5;
 const RING_SPLIT_DEPTH: u32 = 16;
@@ -253,8 +253,11 @@ fn fill_uv(shape: Shape, uv: [f32; 2], progress: f32) -> [f32; 2] {
 
 fn ring_sweep_uv(uv: [f32; 2], progress: f32) -> [f32; 2] {
     let radius_share = 2.0 * (uv[0] - 0.5).hypot(uv[1] - 0.5);
-    let row = 0.5 + progress.clamp(0.0, 1.0) * (RING_SWEEP_ROWS - 1) as f32;
-    [radius_share / RING_SWEEP_REACH, row / RING_SWEEP_ROWS as f32]
+    let behind_front = progress.clamp(0.0, 1.0) - radius_share;
+    [
+        radius_share / RING_SWEEP_REACH,
+        (behind_front + RING_SWEEP_LEAD) / (1.0 + RING_SWEEP_LEAD),
+    ]
 }
 
 fn ring_sweep_alpha(size: f32, radius: f32, front: f32) -> f32 {
@@ -375,15 +378,17 @@ fn bake_ring_sweep(key: TextureKey, size: f32) -> Image {
     let palette = PALETTES[usize::from(key.style).min(PALETTES.len() - 1)];
     let reach = size * RING_SWEEP_REACH;
     let width = texture_pixels(reach);
-    let mut data = Vec::with_capacity((width * RING_SWEEP_ROWS * 4) as usize);
-    for row in 0..RING_SWEEP_ROWS {
-        let front = size * row as f32 / (RING_SWEEP_ROWS - 1) as f32;
+    let height = texture_pixels(size * (1.0 + RING_SWEEP_LEAD));
+    let mut data = Vec::with_capacity((width * height * 4) as usize);
+    for row in 0..height {
+        let v = (row as f32 + 0.5) / height as f32;
+        let behind_front = size * (v * (1.0 + RING_SWEEP_LEAD) - RING_SWEEP_LEAD);
         for column in 0..width {
             let radius = reach * (column as f32 + 0.5) / width as f32;
-            data.extend_from_slice(&rgba(palette.wash, ring_sweep_alpha(size, radius, front)));
+            data.extend_from_slice(&rgba(palette.wash, ring_sweep_alpha(size, radius, radius + behind_front)));
         }
     }
-    image_from(width, RING_SWEEP_ROWS, data)
+    image_from(width, height, data)
 }
 
 fn image_from(width: u32, height: u32, data: Vec<u8>) -> Image {
