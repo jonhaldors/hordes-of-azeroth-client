@@ -551,7 +551,7 @@ pub fn push_telegraphs(
         let white = |v: &EffectVertex, uv: [f32; 2]| EffectVertex {
             pos: v.pos,
             uv,
-            color: [1.0, 1.0, 1.0, v.color[3]],
+            color: [1.0, 1.0, 1.0, v.color[3] * spec.opacity],
         };
         let batch = draw
             .batch(cam, outline)
@@ -592,6 +592,7 @@ mod tests {
             follow: 0,
             texture: None,
             done: 0.0,
+            opacity: 1.0,
         }
     }
 
