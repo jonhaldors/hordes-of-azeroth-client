@@ -16,6 +16,7 @@ const LINE_HALF_WIDTH: f32 = 1.5;
 const SHORTEST_LINE_YARDS: f32 = 1.0;
 const LONGEST_LINE_YARDS: f32 = 72.0;
 const CONE_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
+const RING_INNER_SHARE: f32 = 0.3;
 const RIM_YARDS: f32 = 0.3;
 const SMALLEST_REACH_YARDS: f32 = 4.0;
 const REACH_PER_YARD_OF_SIZE: f32 = 0.6;
@@ -163,13 +164,13 @@ fn line_length(size: f32) -> f32 {
 fn drawn_size(spec: &MarkSpec) -> f32 {
     match spec.shape {
         Shape::Line => line_length(spec.size),
-        Shape::Circle | Shape::Cone => spec.size.max(0.5),
+        Shape::Circle | Shape::Cone | Shape::Ring => spec.size.max(0.5),
     }
 }
 
 fn extents(shape: Shape, size: f32) -> (f32, f32, f32, f32) {
     match shape {
-        Shape::Circle | Shape::Cone => (-size, size, -size, size),
+        Shape::Circle | Shape::Cone | Shape::Ring => (-size, size, -size, size),
         Shape::Line => (-LINE_HALF_WIDTH, LINE_HALF_WIDTH, -size, 0.0),
     }
 }
@@ -240,7 +241,7 @@ fn profile_height_at(profile: &[f32], distance: f32) -> f32 {
 fn fill_uv(shape: Shape, uv: [f32; 2], progress: f32) -> [f32; 2] {
     let p = progress.max(SMALLEST_FILL);
     match shape {
-        Shape::Circle | Shape::Cone => [0.5 + (uv[0] - 0.5) / p, 0.5 + (uv[1] - 0.5) / p],
+        Shape::Circle | Shape::Cone | Shape::Ring => [0.5 + (uv[0] - 0.5) / p, 0.5 + (uv[1] - 0.5) / p],
         Shape::Line => [uv[0], 1.0 - (1.0 - uv[1]) / p],
     }
 }
@@ -261,6 +262,10 @@ fn distance_inside(shape: Shape, size: f32, x: f32, z: f32) -> f32 {
             (size - radius).min(to_edge)
         }
         Shape::Line => (LINE_HALF_WIDTH - x.abs()).min(-z).min(size + z),
+        Shape::Ring => {
+            let radius = (x * x + z * z).sqrt();
+            (size - radius).min(radius - size * RING_INNER_SHARE)
+        }
     }
 }
 
@@ -577,6 +582,14 @@ mod tests {
         assert!(distance_inside(Shape::Cone, 10.0, 4.0, -5.0) > 0.0);
         assert!(distance_inside(Shape::Cone, 10.0, 6.0, -5.0) < 0.0);
         assert!(distance_inside(Shape::Cone, 10.0, 0.0, 5.0) < 0.0);
+    }
+
+    #[test]
+    fn a_ring_leaves_its_middle_open() {
+        assert!(distance_inside(Shape::Ring, 30.0, 0.0, 0.0) < 0.0);
+        assert!(distance_inside(Shape::Ring, 30.0, 8.0, 0.0) < 0.0);
+        assert!(distance_inside(Shape::Ring, 30.0, 0.0, 20.0) > 0.0);
+        assert!(distance_inside(Shape::Ring, 30.0, 31.0, 0.0) < 0.0);
     }
 
     #[test]

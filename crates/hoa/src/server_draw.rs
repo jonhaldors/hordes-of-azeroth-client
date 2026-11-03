@@ -10,6 +10,7 @@ pub enum Shape {
     Circle,
     Cone,
     Line,
+    Ring,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -127,6 +128,7 @@ impl Fields<'_> {
             0 => Some(Shape::Circle),
             1 => Some(Shape::Cone),
             2 => Some(Shape::Line),
+            3 => Some(Shape::Ring),
             _ => None,
         }
     }
