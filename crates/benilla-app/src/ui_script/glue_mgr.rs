@@ -1963,6 +1963,7 @@ pub(crate) fn drive_glue_mgr(
     env_pin: Option<Res<EnvPin>>,
     mut realmlist: Option<ResMut<crate::realmlist::Realmlist>>,
     areas: Option<Res<crate::area::AreaTableRes>>,
+    billing: Option<Res<crate::net::SessionBilling>>,
     sources: super::glue_create::CreateSources,
     state: Option<Res<State<crate::client_state::ClientState>>>,
     time: Res<Time>,
@@ -2013,6 +2014,11 @@ pub(crate) fn drive_glue_mgr(
             if !fresh_vm && r.is_changed() {
                 let (categories, types) = r.glue_setup();
                 s.set_glue_realm_setup(categories, types);
+            }
+        }
+        if let (Some(s), Some(b)) = (script.as_deref_mut(), billing.as_ref()) {
+            if fresh_vm || b.is_changed() {
+                s.set_billing(b.0.time_remaining, b.0.time_rested, b.0.plan_flags);
             }
         }
         // The name a connect resolves (`0x5ab7d0`).

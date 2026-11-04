@@ -142,9 +142,6 @@ const NOT_YET: &[(&str, &[&str])] = &[
          patch and survey and the billing; each a binding of its own, the ones \
          with an in-game namesake included",
         &[
-            "GetBillingPlan",
-            "GetBillingTimeRemaining",
-            "GetBillingTimeRested",
             "PatchDownloadApply",
             "PatchDownloadCancel",
             "PatchDownloadProgress",

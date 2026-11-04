@@ -771,6 +771,30 @@ fn fire_signal(lua: &Lua, signal: GlueSignal) {
     }
 }
 
+fn billing_plan_values(flags: u8) -> [Value; 3] {
+    let plan = match flags & 0x16 {
+        0x02 => 1.0,
+        0x04 => 2.0,
+        0x00 => 3.0,
+        0x10 => 4.0,
+        _ => 0.0,
+    };
+    [
+        Value::Number(plan),
+        Value::Number(f64::from((flags >> 5) & 1)),
+        Value::Number(f64::from((flags >> 3) & 1)),
+    ]
+}
+
+fn billing_minutes_left(time_remaining: u32, plan_flags: u8) -> u32 {
+    let recurring = plan_flags & 0x02 != 0;
+    if recurring {
+        0
+    } else {
+        time_remaining
+    }
+}
+
 /// `Click` on the button the global `name` holds, the stock handlers running as for a press.
 fn click_global(lua: &Lua, name: &str) -> mlua::Result<()> {
     use mlua::ObjectLike;
@@ -1085,6 +1109,33 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    g.set(
+        "GetBillingPlan",
+        lua.create_function(|lua, _: MultiValue| {
+            let flags = lua
+                .app_data_ref::<Model>()
+                .expect("model app_data")
+                .billing_plan_flags;
+            Ok(MultiValue::from_vec(billing_plan_values(flags).to_vec()))
+        })?,
+    )?;
+    g.set(
+        "GetBillingTimeRemaining",
+        lua.create_function(|lua, _: MultiValue| {
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            Ok(f64::from(billing_minutes_left(
+                model.billing_time_remaining,
+                model.billing_plan_flags,
+            )))
+        })?,
+    )?;
+    g.set(
+        "GetBillingTimeRested",
+        lua.create_function(|lua, _: MultiValue| {
+            let model = lua.app_data_ref::<Model>().expect("model app_data");
+            Ok(f64::from(model.billing_time_rested))
+        })?,
+    )?;
 
     // One value (`0x46dbc0`): 1 when the `movieSubtitle` CVar's integer (`[0x882640]+0x28`) is
     // nonzero, else nil.
@@ -1168,6 +1219,43 @@ mod tests {
         fn selected_realm_type(&self) -> Option<u32> {
             self.selected.get()
         }
+    }
+
+    #[test]
+    fn the_billing_verbs_decode_the_connections_group() {
+        let mut s = UiScript::new_glue().unwrap();
+        let plan = |s: &UiScript| s.eval::<Vec<f64>>("return {GetBillingPlan()}").unwrap();
+        assert_eq!(plan(&s), [3.0, 0.0, 0.0]);
+        assert_eq!(
+            s.eval::<f64>("return GetBillingTimeRemaining()").unwrap(),
+            0.0
+        );
+        assert_eq!(s.eval::<f64>("return GetBillingTimeRested()").unwrap(), 0.0);
+
+        for (flags, want) in [
+            (0x02, [1.0, 0.0, 0.0]),
+            (0x04, [2.0, 0.0, 0.0]),
+            (0x10, [4.0, 0.0, 0.0]),
+            (0x06, [0.0, 0.0, 0.0]),
+            (0x28, [3.0, 1.0, 1.0]),
+        ] {
+            s.set_billing(90, 7, flags);
+            assert_eq!(plan(&s), want, "flags {flags:#x}");
+        }
+        s.set_billing(4_000_000_000, 4_000_000_001, 0x02);
+        assert_eq!(
+            s.eval::<f64>("return GetBillingTimeRemaining()").unwrap(),
+            0.0
+        );
+        s.set_billing(4_000_000_000, 4_000_000_001, 0x08);
+        assert_eq!(
+            s.eval::<f64>("return GetBillingTimeRemaining()").unwrap(),
+            4_000_000_000.0
+        );
+        assert_eq!(
+            s.eval::<f64>("return GetBillingTimeRested()").unwrap(),
+            4_000_000_001.0
+        );
     }
 
     fn seated(replies: Vec<(&'static str, Vec<GlueSignal>)>) -> (UiScript, std::rc::Rc<FakeHost>) {
